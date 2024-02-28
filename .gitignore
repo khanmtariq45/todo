@@ -1,0 +1,30 @@
+# Ignore node_modules directory
+node_modules/
+
+# Ignore build output
+/dist/
+
+# Ignore environment variables file
+# .env
+
+# Ignore logs and other generated files
+*.log
+*.json
+*.csv
+
+# Ignore IDE and editor specific files
+.vscode/
+.idea/
+
+# Ignore macOS system files
+.DS_Store
+
+# Ignore npm debug log
+npm-debug.log*
+
+# Ignore TypeScript configuration file
+tsconfig.json
+
+# Ignore JavaScript and JavaScript Map files
+*.js
+*.js.map
