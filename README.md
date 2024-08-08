@@ -1,73 +1,41 @@
-/****** Object:  StoredProcedure [dbo].[inf_log_write]    Script Date: 26/10/2023 ******/
-SET ANSI_NULLS ON
-GO
-SET QUOTED_IDENTIFIER ON
-GO
+To use the stored procedure `[dbo].[inf_log_write]` instead of your current `INSERT` statement, you need to call the procedure and pass the appropriate parameters. Here's how you can do it:
 
-            /* 
-            <description>: stored procedure for saving exception log in "inf_log" table
-            */
-    
-           CREATE OR ALTER PROCEDURE [dbo].[inf_log_write] (
-    
-            @module_code	varchar(100)			--  Module Code
-           ,@function_code  varchar(100)			--	Function Code
-           ,@method		    varchar(200)			--	Name of the DB Objects which is throwing error
-           ,@log_level		tinyint					--	Log Level
-           ,@log_data		varchar(max)			--	Transaction Data
-           ,@log_message	varchar(max)			--	Error Message or Error Status
-           ,@api	        varchar(30)	= 'sql'		--  Api by default will be sql
-           ,@user_id        int			= null		--  User Id
-           ,@location_id	int   		= null		--  Execution identifier for example: Vessel Id
-           )
+### Original Query:
+```sql
+insert into inf_log (uid, module_code, function_code, api, method, log_data, log_level, location_id, log_message, date_of_creation, user_id)
+values (newid(), 'J2_PURC', NULL, 'sql', 'PURC_SP_Ins_RFQ_quote_price', 'Exception occurred in SP', 0, 0, CONCAT('Failed! StepID = ', @vStepID, ', ', ERROR_MESSAGE(), ',parameters:-'+@param+''), getdate(), 1)
+```
 
-            AS
-            BEGIN
-            SET NOCOUNT ON
-            BEGIN TRY
+### Equivalent Stored Procedure Call:
+```sql
+DECLARE @vStepID INT = -- your value here
+DECLARE @param VARCHAR(MAX) = -- your value here
 
-			if @location_id is null
-		    select top 1 @location_id = Vessel_ID from LIB_VESSELS where INSTALLATION =1
-		    
-			declare @os_hostname varchar(200) =null , @os_freemem int = null , @os_loadavg varchar(200) = null
+EXEC [dbo].[inf_log_write]
+    @module_code = 'J2_PURC',
+    @function_code = NULL, 
+    @method = 'PURC_SP_Ins_RFQ_quote_price',
+    @log_level = 0,
+    @log_data = 'Exception occurred in SP',
+    @log_message = CONCAT('Failed! StepID = ', @vStepID, ', ', ERROR_MESSAGE(), ', parameters:-', @param),
+    @api = 'sql',
+    @user_id = 1,
+    @location_id = 0;
+```
 
-			select @os_hostname = CONVERT (varchar,(select SERVERPROPERTY('SERVERNAME') AS 'Instance'))
+### Explanation:
+- **`@module_code`**: Set to `'J2_PURC'`.
+- **`@function_code`**: Set to `NULL` as per your original query.
+- **`@method`**: The name of the stored procedure where the error occurred, `'PURC_SP_Ins_RFQ_quote_price'`.
+- **`@log_level`**: The log level, `0`, which corresponds to your original query.
+- **`@log_data`**: The log message or data, `'Exception occurred in SP'`.
+- **`@log_message`**: The concatenated error message including the `@vStepID`, `ERROR_MESSAGE()`, and `@param`.
+- **`@api`**: The API used, `'sql'`.
+- **`@user_id`**: Set to `1` as per your original query.
+- **`@location_id`**: Set to `0`, as it seems you're passing `0` in your original query.
 
-			select @os_freemem =  available_physical_memory_kb/1024 FROM sys.dm_os_sys_memory
+### Considerations:
+- Ensure that the parameters like `@vStepID` and `@param` are correctly assigned before calling the stored procedure.
+- If you want to handle the default values provided by the stored procedure, you can omit those parameters when calling it.
 
-			select @os_loadavg = (
-
-				select avg(CPU_Usage) from (
-				 SELECT TOP(30) SQLProcessUtilization AS 'CPU_Usage', ROW_NUMBER() OVER(ORDER BY (SELECT NULL)) AS 'row_number'
-				   FROM ( 
-				         SELECT 
-				           record.value('(./Record/@id)[1]', 'int') AS record_id,
-				           record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') AS [SystemIdle],
-				           record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') AS [SQLProcessUtilization], 
-				           [timestamp] 
-				         FROM ( 
-				              SELECT [timestamp], CONVERT(xml, record) AS [record] 
-				              FROM sys.dm_os_ring_buffers 
-				              WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' 
-				              AND record LIKE '%<SystemHealth>%'
-				              ) AS x 
-				        ) AS y
-				 ) AS z
-			)
-               insert into inf_log (uid,module_code,function_code,method,log_level,log_data,log_message,date_of_creation,api,user_id,location_id,os_hostname,os_freemem,os_loadavg)
-               values (newid(),@module_code,@function_code,@method,@log_level,@log_data,@log_message,getdate(),@api,@user_id,@location_id,@os_hostname,@os_freemem,@os_loadavg)
-            END TRY
-            BEGIN CATCH
-            END CATCH
-            END
-
-
-
-
-
-
-
-
-
-            insert into inf_log (uid, module_code, function_code, api, method, log_data,log_level, location_id,log_message, date_of_creation, user_id)
-    --             values (newid(), 'J2_PURC', NULL, 'sql', 'PURC_SP_Ins_RFQ_quote_price', 'Exception occurred in SP', 0, 0, CONCAT('Failed! StepID = ', @vStepID,', ', ERROR_MESSAGE(),',parameters:-'+@param+''), getdate(), 1)
+This approach simplifies the process of logging by centralizing the logic in the stored procedure.
