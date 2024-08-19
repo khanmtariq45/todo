@@ -1,13 +1,3 @@
-/****** Object:  StoredProcedure [dbo].[PURC_Sp_Ins_File_Attachment_info_test]    Script Date: 09-02-2022 10:45:09 ******/
-SET ANSI_NULLS ON
-GO
-SET QUOTED_IDENTIFIER ON
-GO
-/*-------------------------------------------------
-Description: Increase size of reqsn code and qtn code and also checking qtn req or not
-Modified By - Alok Kumar
--- --EXEC PURC_Sp_Ins_File_Attachment_info '10','TIGR-SAE-140006-O','0','.jpg','CUsersPublicPicturesSample PicturesChrysanthemum.jpg','../Uploads/Purchase/3bc2bc4c-ac50-47e7-8ee0-d3fe89315a3e.jpg',2712,0
------------------------*/
 CREATE OR ALTER PROCEDURE [purc].[PURC_Sp_Ins_File_Attachment_info]
     @VesselCode   varchar(20),
     @ReqsCode     varchar(100),
@@ -42,7 +32,7 @@ BEGIN
     SET @vStepID = 1;
 
     BEGIN TRY
-        SET XACT_ABORT ON;
+        SET XACT_ABORT ON; -- Automatically rollback on error
         BEGIN TRAN Tr_Attachment;
 
         SET @vStepID = 2;
@@ -75,8 +65,9 @@ BEGIN
             );
         END
 
-        COMMIT TRAN Tr_Attachment;
-        RETURN @ID;
+        COMMIT TRAN Tr_Attachment; -- Commit transaction if successful
+
+        RETURN @ID; -- Return the ID
 
     END TRY
     BEGIN CATCH
@@ -91,12 +82,13 @@ BEGIN
 
         IF (@@TRANCOUNT > 0)
         BEGIN
-            ROLLBACK TRAN Tr_Attachment;
+            ROLLBACK TRAN Tr_Attachment; -- Rollback transaction on error
         END
 
         SET @logMessage = CONCAT('Failed! StepID = ', @vStepID, ', ', @ErrorMessage, ', parameters: ', @param);
         EXEC [dbo].[inf_log_write] 'J2_PURC', NULL, 'PURC_Sp_Ins_File_Attachment_info', 0, 'Exception occurred in SP', @logMessage, 'sql', 1, 0;
 
         RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+        RETURN -1; -- Return -1 to indicate failure
     END CATCH
 END
