@@ -1,94 +1,23 @@
-CREATE OR ALTER PROCEDURE [purc].[PURC_Sp_Ins_File_Attachment_info]
-    @VesselCode   varchar(20),
-    @ReqsCode     varchar(100),
-    @SuppCode     varchar(20),
-    @FileType     varchar(50),
-    @FileName     varchar(150),
-    @FilePath     varchar(150),
-    @CreatedBy    varchar(10),
-    @PortID       int,
-    @CategoryID   int = 0,
-    @FileUid      uniqueidentifier
-AS
-BEGIN
-    SET NOCOUNT ON;
-    DECLARE @ID int;
-    DECLARE @DocCode varchar(50);
-    DECLARE @logMessage VARCHAR(MAX);
-    DECLARE @vStepID int;
-    DECLARE @param VARCHAR(MAX) = CONCAT(
-        '@SuppCode=', CONVERT(varchar(20), @SuppCode),
-        ',@ReqsCode=', CONVERT(varchar(100), @ReqsCode),
-        ',@VesselCode=', CONVERT(varchar(20), @VesselCode),
-        ',@FileType=', CONVERT(varchar(50), @FileType),
-        ',@FileName=', CONVERT(varchar(150), @FileName),
-        ',@FilePath=', CONVERT(varchar(150), @FilePath),
-        ',@CreatedBy=', CONVERT(varchar(10), @CreatedBy),
-        ',@FileUid=', CONVERT(uniqueidentifier, @FileUid),
-        ',@PortID=', CONVERT(int, @PortID),
-        ',@CategoryID=', CONVERT(int, @CategoryID)
-    );
-
-    SET @vStepID = 1;
-
-    BEGIN TRY
-        SET XACT_ABORT ON; -- Automatically rollback on error
-        BEGIN TRAN Tr_Attachment;
-
-        SET @vStepID = 2;
-        SELECT @DocCode = DOCUMENT_CODE 
-        FROM PURC_DTL_REQSN 
-        WHERE REQUISITION_CODE = @ReqsCode;
-
-        IF NOT EXISTS (
-            SELECT * 
-            FROM PURC_DTL_FILE_ATTACH 
-            WHERE Vessel_Code = @VesselCode 
-              AND Supplier_Code = @SuppCode 
-              AND [File_Name] = @FileName 
-              AND Requisition_Code = @ReqsCode 
-              AND Active_Status = 1
-        )
-        BEGIN
-            SET @vStepID = 3;
-            SET @ID = (SELECT ISNULL(MAX(ID), 0) + 1 FROM dbo.PURC_DTL_FILE_ATTACH);
-            SET @vStepID = 4;
-
-            INSERT INTO [PURC_DTL_FILE_ATTACH] (
-                [Id], [Vessel_Code], [Requisition_Code], [DOCUMENT_CODE], [Supplier_Code], 
-                [File_Type], [File_Name], [File_Path], [Created_By], [Date_Of_Creatation], 
-                [Active_Status], PORT_ID, CategoryID, file_upload_uid
-            )
-            VALUES (
-                @ID, @VesselCode, @ReqsCode, @DocCode, @SuppCode, @FileType, 
-                @FileName, @FilePath, @CreatedBy, GETDATE(), '1', @PortID, @CategoryID, @FileUid
-            );
-        END
-
-        COMMIT TRAN Tr_Attachment; -- Commit transaction if successful
-
-        RETURN @ID; -- Return the ID
-
-    END TRY
-    BEGIN CATCH
-        DECLARE @ErrorMessage NVARCHAR(4000);
-        DECLARE @ErrorSeverity INT;
-        DECLARE @ErrorState INT;
-
-        SELECT 
-            @ErrorMessage = ERROR_MESSAGE(),
-            @ErrorSeverity = ERROR_SEVERITY(),
-            @ErrorState = ERROR_STATE;
-
-        IF (@@TRANCOUNT > 0)
-        BEGIN
-            ROLLBACK TRAN Tr_Attachment; -- Rollback transaction on error
-        END
-
-        SET @logMessage = CONCAT('Failed! StepID = ', @vStepID, ', ', @ErrorMessage, ', parameters: ', @param);
-        EXEC [dbo].[inf_log_write] 'J2_PURC', NULL, 'PURC_Sp_Ins_File_Attachment_info', 0, 'Exception occurred in SP', @logMessage, 'sql', 1, 0;
-
-        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
-        RETURN -1; -- Return -1 to indicate failure
-    END CATCH
-END
+select distinct VesselTypeID as [value] , Active_Status from (
+            select
+            VA.Uid as AssignedID ,
+                    V.FleetCode ,
+                    V.Vessel_Type as VesselTypeID ,
+                    V.Vessel_Owner_Code as owner_Code ,
+                    aslCompany.Supplier_Code as company_Code,
+                    aslmanagement.SUPPLIER_ID,
+                    V.uid as vessel_uid,
+                    V.Vessel_Flag as VesselFlag_ID,
+                    V.Vessel_type,
+                    lvg.uid,
+                    aslowner.Supplier_Code as ss,
+                    VA.Active_Status as Active_Status
+             FROM "dbo"."LIB_VESSELS" "v"
+             LEFT JOIN "dbo"."INF_DTL_USER_VESSEL_ASSIGNMENT" "VA" with(nolock) ON V.vessel_ID = VA.vessel_ID and va.Active_Status = 1 and "v"."Active_Status" = 1 and User_ID = '658'
+             LEFT JOIN "dbo"."INF_DTL_COMPANY_VESSEL" "dcv" with(nolock) ON v.vessel_id = "dcv"."VesselID" and dcv.active_status = 1
+             LEFT JOIN "dbo"."inf_lnk_vessel_group_vessels" "vlink" with(nolock) ON "vlink"."vessel_uid" = "v"."uid" and "vlink"."active_status" = 1
+             LEFT JOIN "dbo"."inf_lib_vessel_group" "lvg" with(nolock) ON "lvg"."uid" = "vlink"."vessel_group_uid" and "lvg"."active_status" = 1
+             LEFT JOIN "dbo"."ASL_Supplier" "aslowner" with(nolock) ON "aslowner"."Supplier_Code" = "v"."Vessel_Owner_Code" and aslOwner.Supplier_Type = 'OWNER' and aslowner.active_status = 1  
+             LEFT JOIN "dbo"."ASL_Supplier" "aslCompany" with(nolock) ON dcv.Supplier_Code = aslCompany.Supplier_Code and aslCompany.Supplier_Type = 'OWNER' and aslCompany.Active_status = 1  
+             LEFT JOIN "dbo"."ASL_Supplier" "aslmanagement" with(nolock) ON dcv.Supplier_Code = aslmanagement.Supplier_Code and aslmanagement.Supplier_Type = 'Management Company' and aslmanagement.Active_status = 1  
+             Where VA.Active_Status = 1)as tempAllise where VesselTypeID is not null
