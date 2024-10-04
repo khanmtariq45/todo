@@ -1,3 +1,17 @@
+DELETE qa
+FROM QMS_DTL_Vessel_Assignment qa
+LEFT JOIN (
+    SELECT FolderID, VesselID
+    FROM @FolderIDS f
+    CROSS JOIN @VesselIDS v
+) AS incoming
+ON qa.Document_ID = incoming.FolderID
+AND qa.Vessel_ID = incoming.VesselID
+WHERE incoming.FolderID IS NULL
+AND qa.Active_Status = 1;
+
+
+
 CREATE OR ALTER PROCEDURE [dbo].[QMS_File_Keep_Assignment]     
 (          
     @FolderIDS UDTT_QMSAssignmnetFolderIDs readonly,          
