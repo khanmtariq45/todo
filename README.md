@@ -7,8 +7,11 @@ CREATE OR ALTER PROCEDURE [dbo].[QMS_RESYNC_ASSIGNEMNETS]
 AS   
 BEGIN   
   DECLARE   
-    @DocID INT, @FolderID INT, @CheckCount INT = 0, 
-    @VesselID INT = 0, @FileVersion INT, 
+    @DocID INT, 
+    @FolderID INT, 
+    @CheckCount INT = 0, 
+    @VesselID INT = 0, 
+    @FileVersion INT, 
     @assignmentID INT
 
   DECLARE FolderID_Cursor CURSOR FOR   
@@ -19,30 +22,62 @@ BEGIN
   
   WHILE @@FETCH_STATUS = 0  
   BEGIN  
-    -- Loop through files in the folder
-    DECLARE DocID_Cursor CURSOR FOR   
-      SELECT ID FROM QMSdtlsFile_Log 
-      WHERE ParentID = @FolderID AND Active_Status = 1 AND NodeType = 0 
-
-    OPEN DocID_Cursor  
-    FETCH NEXT FROM DocID_Cursor INTO @DocID    
+    -- Loop through vessels
+    DECLARE VesselID_Cursor CURSOR FOR   
+      SELECT VesselID FROM @VesselIDS  
+    
+    OPEN VesselID_Cursor  
+    FETCH NEXT FROM VesselID_Cursor INTO @VesselID   
     
     WHILE @@FETCH_STATUS = 0  
-    BEGIN   
-      SET @FileVersion = (SELECT Version 
-                          FROM QMSdtlsFile_Log 
-                          WHERE ID = @DocID AND Active_Status = 1 AND NodeType = 0)      
-    
-      -- Loop through vessels
-      DECLARE VesselID_Cursor CURSOR FOR   
-        SELECT VesselID FROM @VesselIDS  
-        
-      OPEN VesselID_Cursor  
-      FETCH NEXT FROM VesselID_Cursor INTO @VesselID   
-
-      WHILE @@FETCH_STATUS = 0  
+    BEGIN      
+      -- Sync the folder itself
+      IF EXISTS (SELECT TOP 1 ID 
+                 FROM QMS_DTL_Vessel_Assignment 
+                 WHERE Document_ID = @FolderID AND Vessel_ID = @VesselID)      
       BEGIN      
-        -- Check if the assignment exists and update it
+        SELECT TOP 1 @assignmentID = ID 
+        FROM QMS_DTL_Vessel_Assignment 
+        WHERE Document_ID = @FolderID AND Vessel_ID = @VesselID
+        ORDER BY ID DESC
+
+        UPDATE QMS_DTL_Vessel_Assignment 
+        SET Date_Of_Modification = GETDATE(), Modified_By = @UserID, 
+            Active_Status = 1, Date_Of_Deletion = NULL, Deleted_By = NULL
+        WHERE ID = @assignmentID
+      END      
+      ELSE      
+      BEGIN      
+        -- Insert a new folder assignment if not found
+        INSERT INTO QMS_DTL_Vessel_Assignment(Document_ID, Vessel_ID, Created_By, Date_Of_Creation, Active_Status, FileVersion)      
+        VALUES(@FolderID, @VesselID, @UserID, GETDATE(), 1, NULL)      
+      END      
+
+      -- Merge data in QMS_Sync_History table for the folder       
+      MERGE INTO QMS_Sync_History AS TARGET       
+      USING (VALUES(@FolderID, @VesselID, NULL, @UserID, GETDATE(), 1)) AS SOURCE (FileID, VesselID, FileVersion, Created_By, Date_Of_Creation, Active_Status)      
+      ON TARGET.FileID = SOURCE.FileID AND TARGET.VesselID = SOURCE.VesselID    
+      WHEN MATCHED THEN       
+        UPDATE SET TARGET.Active_Status = 1, TARGET.Date_Of_Modification = GETDATE()       
+      WHEN NOT MATCHED BY TARGET THEN      
+        INSERT (FileID, VesselID, FileVersion, Created_By, Date_Of_Creation, Active_Status)      
+        VALUES (@FolderID, @VesselID, NULL, @UserID, GETDATE(), 1);   
+
+      -- Now handle documents in the folder
+      DECLARE DocID_Cursor CURSOR FOR   
+        SELECT ID FROM QMSdtlsFile_Log 
+        WHERE ParentID = @FolderID AND Active_Status = 1 AND NodeType = 0 
+
+      OPEN DocID_Cursor  
+      FETCH NEXT FROM DocID_Cursor INTO @DocID    
+      
+      WHILE @@FETCH_STATUS = 0  
+      BEGIN   
+        SET @FileVersion = (SELECT Version 
+                            FROM QMSdtlsFile_Log 
+                            WHERE ID = @DocID AND Active_Status = 1 AND NodeType = 0)      
+
+        -- Check if the assignment exists for the file and update it
         IF EXISTS (SELECT TOP 1 ID 
                    FROM QMS_DTL_Vessel_Assignment 
                    WHERE Document_ID = @DocID AND Vessel_ID = @VesselID AND FileVersion = @FileVersion)      
@@ -60,12 +95,12 @@ BEGIN
         END      
         ELSE      
         BEGIN      
-          -- Insert a new assignment if not found
+          -- Insert a new file assignment if not found
           INSERT INTO QMS_DTL_Vessel_Assignment(Document_ID, Vessel_ID, Created_By, Date_Of_Creation, Active_Status, FileVersion)      
           VALUES(@DocID, @VesselID, @UserID, GETDATE(), 1, @FileVersion)      
         END      
-    
-        -- Merge data in QMS_Sync_History table       
+
+        -- Merge data in QMS_Sync_History table for files       
         MERGE INTO QMS_Sync_History AS TARGET       
         USING (VALUES(@DocID, @VesselID, @FileVersion, @UserID, GETDATE(), 1)) AS SOURCE (FileID, VesselID, FileVersion, Created_By, Date_Of_Creation, Active_Status)      
         ON TARGET.FileID = SOURCE.FileID AND TARGET.VesselID = SOURCE.VesselID AND TARGET.FileVersion = SOURCE.FileVersion   
@@ -75,17 +110,17 @@ BEGIN
           INSERT (FileID, VesselID, FileVersion, Created_By, Date_Of_Creation, Active_Status)      
           VALUES (@DocID, @VesselID, @FileVersion, @UserID, GETDATE(), 1);   
 
-        FETCH NEXT FROM VesselID_Cursor INTO @VesselID   
-      END -- End Vessel Loop
-      
-      CLOSE VesselID_Cursor  
-      DEALLOCATE VesselID_Cursor  
+        FETCH NEXT FROM DocID_Cursor INTO @DocID   
+      END -- End File Loop
 
-      FETCH NEXT FROM DocID_Cursor INTO @DocID   
-    END -- End File Loop
+      CLOSE DocID_Cursor  
+      DEALLOCATE DocID_Cursor  
+
+      FETCH NEXT FROM VesselID_Cursor INTO @VesselID   
+    END -- End Vessel Loop
     
-    CLOSE DocID_Cursor  
-    DEALLOCATE DocID_Cursor  
+    CLOSE VesselID_Cursor  
+    DEALLOCATE VesselID_Cursor  
 
     FETCH NEXT FROM FolderID_Cursor INTO @FolderID  
   END -- End Folder Loop
