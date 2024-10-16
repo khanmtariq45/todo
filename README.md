@@ -10,10 +10,16 @@ import {
   Renderer2,
   SimpleChanges,
 } from '@angular/core';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Params, Router } from '@angular/router';
 import { ContentType } from '../../enums/PreviewAvailable';
 import { eLinkType } from '../../enums/LinkType';
 import { ToastService } from '@j3-inventory/shared';
+import { DocumentViewerService } from '../../services/document-viewer.service';
+import { ApiRequestService, AuthService, eApiBase, eCrud } from 'jibe-components';
+import { IFileInfo } from '../../models/IFileInfo';
+import { filter, map, tap } from 'rxjs/operators';
+import { HttpResponse } from '@angular/common/http';
+import { Observable } from 'rxjs';
 
 @Component({
   selector: 'jb-view-area',
@@ -24,6 +30,9 @@ import { ToastService } from '@j3-inventory/shared';
 export class ViewAreaComponent implements OnChanges, OnDestroy {
   public previewAvailable = false;
   public readonly contentType = ContentType;
+  public documentBlob: File = null;
+  public fileInfo: IFileInfo[] = null;
+  public notFound = false;
   @Input() public uniqHtmlId: string;
   /**
    * Handle file which should be shown in the view area.
@@ -42,7 +51,7 @@ export class ViewAreaComponent implements OnChanges, OnDestroy {
     ContentType.Pdf,
     ContentType.Png,
     ContentType.Txt,
-    ContentType.MP4,
+    ContentType.Mp4,
   ];
 
   private readonly scrollPosCache = new Map<string, number>();
@@ -58,7 +67,7 @@ export class ViewAreaComponent implements OnChanges, OnDestroy {
     if (changes.file && changes.file.currentValue) {
       const file = changes.file.currentValue;
 
-      if (this.previewAvailableList.includes(file.type)) {
+      if (this.previewAvailableList.includes(file.type) || (file.type === ContentType.Octet && file.name.endsWith('.mp4'))) {
         this.previewAvailable = true;
       } else {
         this.previewAvailable = false;
@@ -99,6 +108,9 @@ export class ViewAreaComponent implements OnChanges, OnDestroy {
     private readonly cdr: ChangeDetectorRef,
     private readonly renderer: Renderer2,
     private readonly toastService: ToastService,
+    private readonly documentViewerService: DocumentViewerService,
+    private readonly authService: AuthService,
+    private readonly apiRequestService: ApiRequestService,
   ) {}
 
   public ngOnDestroy(): void {
@@ -144,14 +156,47 @@ export class ViewAreaComponent implements OnChanges, OnDestroy {
           case eLinkType.Relative:
             {
               const href = link.getAttribute('href');
+              const match = href.match(/[?&]DocId=([^&]*)/);
+              const childDocId = match ? match[1] : null;
+
               const urlTree = this.router.parseUrl(href);
               const { DocId } = this.route.snapshot.queryParams;
               this.scrollPosCache.set(DocId, iframeDocument.defaultView.scrollY);
-              this.router.navigateByUrl(`/qms?DocId=${DocId}`, { relativeTo: this.route }).then(() => {
-                urlTree.queryParams = {
-                  DocId: urlTree.queryParams.DocId,
-                };
-                this.router.navigateByUrl(urlTree.toString(), { relativeTo: this.route });
+              const j2auth = this.documentViewerService.getJ2Auth(this.route.snapshot.queryParams);
+
+              // const fileInfoItem = this.fileInfo.find((item) => item.docId === childDocId);
+              // if(fileInfoItem) {
+              //   const fileExtension = fileInfoItem.fileExtension;
+
+              //   if (this.previewAvailableList.includes(this.getMimeTypeFromExtension(fileExtension)) || fileExtension === '.mp4') {
+              //     this.router.navigateByUrl(`/qms?DocId=${DocId}`, { relativeTo: this.route }).then(() => {
+              //       urlTree.queryParams = {
+              //         DocId: urlTree.queryParams.DocId,
+              //       };
+              //       this.router.navigateByUrl(urlTree.toString(), { relativeTo: this.route });
+              //     });
+              //   } else {
+              //     this.downloadFile(fileName, blob);
+              //   }
+
+              // }
+              this.documentViewerService.getDocument$(j2auth, childDocId).subscribe((response) => {
+                const blob: Blob = response.body as Blob;
+                // this.fileInfo;
+                const fileName = response.headers.get('Content-Disposition').split('filename=')[1] || 'download.xls';
+                if (
+                  this.previewAvailableList.includes(blob.type as ContentType) ||
+                  (blob.type === ContentType.Octet && fileName.endsWith('.mp4'))
+                ) {
+                  this.router.navigateByUrl(`/qms?DocId=${DocId}`, { relativeTo: this.route }).then(() => {
+                    urlTree.queryParams = {
+                      DocId: urlTree.queryParams.DocId,
+                    };
+                    this.router.navigateByUrl(urlTree.toString(), { relativeTo: this.route });
+                  });
+                } else {
+                  this.downloadFile(fileName, blob);
+                }
               });
             }
             break;
@@ -178,6 +223,11 @@ export class ViewAreaComponent implements OnChanges, OnDestroy {
         }
       });
     });
+  }
+
+  public isVideo(file: any): boolean {
+    const videoTypes = ['video/mp4', 'video/webm', 'video/ogg', 'application/octet-stream'];
+    return videoTypes.includes(file.type);
   }
 
   /**
@@ -214,10 +264,6 @@ export class ViewAreaComponent implements OnChanges, OnDestroy {
     iframeDocument.defaultView.scrollTo(options);
   }
 
-  private isVideo(file: any): boolean {
-    const videoTypes = ['video/mp4', 'video/webm', 'video/ogg', 'application/octet-stream'];
-    return videoTypes.includes(file.type);
-  }
   /**
    * Used to parse links from html string and update them with some metadata.
    * If link is relative/anchor it will be updated to include query param `isMenuVisible=false` and target will be set to `_parent`.
@@ -231,6 +277,9 @@ export class ViewAreaComponent implements OnChanges, OnDestroy {
     const doc = parser.parseFromString(htmlToChange, 'text/html');
 
     const links = doc.querySelectorAll('a');
+
+    const docIds: string[] = [];
+
     links.forEach((link: HTMLAnchorElement) => {
       const href = link.getAttribute('href');
       if (!href) {
@@ -240,10 +289,15 @@ export class ViewAreaComponent implements OnChanges, OnDestroy {
         link.dataset.linkType = eLinkType.Invalid;
         return;
       }
-
       if (href.startsWith('/')) {
         const withoutHash = href.split('#')[1];
+        const match = href.match(/[?&]DocId=([^&]*)/);
+        const childDocId = match ? match[1] : null;
+        if (withoutHash) {
+          docIds.push(childDocId);
+        }
         const urlTree = this.router.parseUrl(withoutHash);
+
         urlTree.queryParams.isMenuVisible = false;
         const modifiedHref = urlTree.toString();
         link.dataset.linkType = urlTree.queryParams.anchor ? eLinkType.Anchor : eLinkType.Relative;
@@ -253,11 +307,21 @@ export class ViewAreaComponent implements OnChanges, OnDestroy {
         link.setAttribute('target', '_blank');
         link.dataset.linkType = eLinkType.Absolute;
       } else {
-        // here are handled invalid format of links
         // eslint-disable-next-line no-console
         console.warn(`Invalid link. Title - '${link.textContent}', href - '${href}'`);
         link.dataset.linkType = eLinkType.Invalid;
       }
+    });
+
+    if (docIds && docIds.length > 0) {
+      this.fileInfo = this.loadFileDetailss(docIds);
+    }
+
+    links.forEach((link: HTMLAnchorElement) => {
+      link.setAttribute('title', 'Tariq and Haris');
+      console.log('this');
+      console.log(this.fileInfo);
+      this.cdr.detectChanges();
     });
 
     const modifiedHtml = new XMLSerializer().serializeToString(doc);
@@ -276,5 +340,97 @@ export class ViewAreaComponent implements OnChanges, OnDestroy {
             }),
         ),
     );
+  }
+
+  private async downloadFile(fileName: string, blob: Blob): Promise<void> {
+    const file = new File([blob], fileName, { type: blob.type });
+    const fileURL = URL.createObjectURL(file);
+    const fileLink = document.createElement('a');
+    fileLink.href = fileURL;
+    fileLink.download = file.name;
+    fileLink.click();
+  }
+
+  private async loadFileDetails(docIds: string[]): Promise<IFileInfo[]> {
+    const j2auth = this.documentViewerService.getJ2Auth(this.route.snapshot.queryParams);
+
+    try {
+      const response = await this.getFilesDetails$(j2auth, docIds).toPromise();
+      if (response.status === 404) {
+        this.notFound = true;
+        console.warn('Document not found');
+        return [];
+      }
+
+      const result: IFileInfo[] = [];
+      if (response) {
+        for (const key in response) {
+          Object.keys(response).forEach((docId: string) => {
+            const fileDetailsArray = response[docId];
+
+            if (Array.isArray(fileDetailsArray) && fileDetailsArray.length > 0) {
+              fileDetailsArray.forEach((fileDetails: any) => {
+                if (!result.some((item) => item.docId === docId)) {
+                  result.push({
+                    docId: docId,
+                    filePath: fileDetails.FilePath,
+                    fileExtension: fileDetails.Extension,
+                  });
+                }
+              });
+            }
+          });
+        }
+      }
+      this.fileInfo = result;
+      debugger
+      return result;
+    } catch (error) {
+      console.error('Error loading file details:', error);
+      throw error;
+    }
+  }
+
+  public loadFileDetailss(docIds: string[]): IFileInfo[] {
+    let fileDetails: IFileInfo[] = [];
+
+    // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+    (async () => {
+      fileDetails = await this.loadFileDetails(docIds);
+    })();
+    debugger
+
+    return fileDetails;
+  }
+
+  public getFilesDetails$(auth: string, docIds: string[]): Observable<HttpResponse<IFileInfo>> {
+    const apiRequest = {
+      apiBase: eApiBase.CrewAPI,
+      entity: 'quality',
+      action: `get-files-detail`,
+      crud: eCrud.Post,
+      body: { docIds },
+    };
+    return this.apiRequestService.sendApiReq(apiRequest);
+  }
+
+  private getMimeTypeFromExtension(extension: string): ContentType {
+    switch (extension.toLocaleLowerCase()) {
+      case 'pdf':
+        return ContentType.Pdf;
+      case 'jpg':
+      case 'jpeg':
+        return ContentType.Jpg;
+      case 'png':
+        return ContentType.Png;
+      case 'gif':
+        return ContentType.Gif;
+      case 'txt':
+        return ContentType.Txt;
+      case 'mp4':
+        return ContentType.Mp4;
+      default:
+        return null;
+    }
   }
 }
