@@ -1,63 +1,74 @@
-/****** Object:  StoredProcedure [dbo].[QMS_Create_Assignments]  Script Date: 10/09/2024 ******/
-SET ANSI_NULLS ON
-GO
-SET QUOTED_IDENTIFIER ON
-GO
+     public bool SaveVesselAssignment(string folderAssignmentUid, int folderId, string requestUid, bool deletePreviousAssignments, int createdBy, List<QmsAssignmentRequestVesselModel> records)
+        {
+            bool isSuccess = false;
 
--- =============================================
--- Author:		Muhammad Tariq 
--- Create date: 10/09/2024
--- Description:	for folder and file assignment with selected vessels
--- =============================================
+            DataTable dtFolders = new DataTable();
+            dtFolders.Columns.Add("FolderID");
 
-CREATE OR ALTER PROCEDURE [dbo].[QMS_Create_Assignments]      
-  (  
-  @FolderIDS UDTT_QMSAssignmnetFolderIDs readonly ,      
-  @VesselIDS UDTT_QMSAssignedVesselIDs readonly ,      
-  @UserID INT  
-  )      
-  AS   
-  BEGIN  
-  BEGIN TRY
+            var newFolderRow = dtFolders.NewRow();
+            newFolderRow["FolderID"] = folderId;
 
-    DECLARE @VesselIDList NVARCHAR(MAX) = '';
-    DECLARE @FolderIDList NVARCHAR(MAX) = '';
+            dtFolders.Rows.Add(newFolderRow);
 
-    SELECT @VesselIDList = STUFF((SELECT CONCAT(', ', CAST(VesselID AS NVARCHAR(MAX)))
-                                  FROM @VesselIDS
-                                  FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 2, '');
+            var synchronizationObject = new Object();
 
-    SELECT @FolderIDList = STUFF((SELECT CONCAT(', ', CAST(FolderID AS NVARCHAR(MAX)))
-                                  FROM @FolderIDS
-                                  FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 2, '');
+            var targetVesselIdentifiers = new HashSet<int>();
 
-    DECLARE @param NVARCHAR(MAX) = CONCAT('@FolderIDList=', @FolderIDList,
-                                          ',@VesselIDList=', @VesselIDList,
-                                          ',@UserID=', @UserID);
+            foreach (var rec in records)
+            {
+                targetVesselIdentifiers.Add(rec.VesselId);
+            }
 
-    EXEC inf_log_write 'qms','syncing','QMS_Create_Assignments1', 1, 'QMS_Create_Assignments1', @param;
-    -- Update QMS_DTL_Vessel_Assignment
-    UPDATE va
-    SET va.Active_Status = 0, va.Deleted_By = @UserID, va.Date_Of_Deletion = GETDATE()
-    FROM QMS_DTL_Vessel_Assignment va
-    INNER JOIN QMSdtlsFile_Log fl ON va.Document_ID = fl.Id
-    INNER JOIN @FolderIDS fi ON fi.FolderID = fl.ID OR (fi.FolderID = fl.ParentId AND fl.NodeType = 0)
-    WHERE va.Active_Status = 1 AND va.Vessel_ID NOT IN (SELECT VesselID FROM @VesselIDS);
+            var vesselExecution = new Action<int, bool>((vesselId, replaceAssignments) =>
+            {
+                DataTable dtVessels = new DataTable();
+                dtVessels.Columns.Add("VesselID");
 
-    -- Update QMS_Sync_History
-    UPDATE h
-    SET h.Active_Status = 0, h.Deleted_By = @UserID, h.Date_Of_Deletion = GETDATE()
-    FROM QMS_Sync_History h
-    INNER JOIN QMSdtlsFile_Log fl ON h.FileID = fl.ID
-    INNER JOIN @FolderIDS fi ON fi.FolderID = fl.ID OR (fi.FolderID = fl.ParentId AND fl.NodeType = 0)
-    WHERE h.Active_Status = 1 AND h.VesselID NOT IN (SELECT VesselID FROM @VesselIDS);
+                var newRow = dtVessels.NewRow();
+                newRow["VesselID"] = vesselId;
+                dtVessels.Rows.Add(newRow);
 
-    exec [dbo].[QMS_File_Keep_Assignment] @FolderIDS , @VesselIDS, @UserID
-     return 2;
-    END TRY  
+                if (replaceAssignments)
+                {
+                    if (obj.QMS_Resync_AssignDocToVessel(dtFolders, dtVessels, createdBy) > 0)
+                    {
+                        lock (synchronizationObject)
+                        {
+                            isSuccess |= true;
+                        }
+                    }
+                }
+                else
+                {
+                    if (obj.QMS_Create_AssignToVessel(dtFolders, dtVessels, createdBy) > 0)
+                    {
+                        lock (synchronizationObject)
+                        {
+                            isSuccess |= true;
+                        }
+                    }
+                }
+            });
 
-	BEGIN CATCH    
-		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE()    
-		EXEC inf_log_write 'qms','syncing','QMS_Create_Assignments', 1, 'QMS_Create_Assignments', @ErrorMessage      
-	END CATCH
-END 
+            if (deletePreviousAssignments && !records[0].PreviousAssignmentsDeleted)
+            {
+                vesselExecution(records[0].VesselId, true);
+                targetVesselIdentifiers.Remove(records[0].VesselId);
+            }
+
+            var settings = getConfigDetails();
+            var parallelismOptions = new ParallelOptions() { MaxDegreeOfParallelism = settings.AssignmentVesselProcessingParallelismDegree };
+
+            Parallel.ForEach(targetVesselIdentifiers, parallelismOptions, currentVesselId =>
+            {
+                vesselExecution(currentVesselId, false);
+            });
+
+            if (deletePreviousAssignments && !records[0].PreviousAssignmentsDeleted && isSuccess)
+            {
+                obj.UpdatePreviousAssignmentsDeletedStatus(folderAssignmentUid);
+            }
+
+            return isSuccess? obj.UpdateFolderVesselAssignmentSuccessStatus(folderAssignmentUid): 
+                obj.UpdateFolderVesselAssignmentFailStatus(folderAssignmentUid);
+        }
