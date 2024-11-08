@@ -1,51 +1,109 @@
-public bool SaveVesselAssignment(string folderAssignmentUid, int folderId, string requestUid, bool deletePreviousAssignments, int createdBy, List<QmsAssignmentRequestVesselModel> records)
-{
-    bool isSuccess = false;
+DECLARE @FoderID BIGINT = NULL;
 
-    DataTable dtFolders = new DataTable();
-    dtFolders.Columns.Add("FolderID");
+DROP TABLE IF EXISTS #ParentFolders;
+DROP TABLE IF EXISTS #subfolder;
 
-    var newFolderRow = dtFolders.NewRow();
-    newFolderRow["FolderID"] = folderId;
+CREATE TABLE #ParentFolders (
+    FOLDER_ID INT,
+    PARENT_FOLDER_ID INT,
+    XPATH VARCHAR(MAX),
+    FOLDER_NAME VARCHAR(500),
+    XNPATH VARCHAR(MAX),
+    Opath VARCHAR(MAX),
+    HaveChild BIT
+);
 
-    dtFolders.Rows.Add(newFolderRow);
+CREATE TABLE #subfolder (
+    ID INT,
+    ParentID INT,
+    XPATH VARCHAR(MAX),
+    FOLDER_NAME VARCHAR(500),
+    XNPATH VARCHAR(MAX),
+    Opath VARCHAR(MAX)
+);
 
-    DataTable dtVessels = new DataTable();
-    dtVessels.Columns.Add("VesselID");
+IF @FoderID IS NULL    
+BEGIN          
+    INSERT INTO #ParentFolders    
+    SELECT      
+        ID AS FOLDER_ID,                 
+        ParentID AS PARENT_FOLDER_ID,                 
+        CONVERT(VARCHAR(MAX), CONVERT(VARCHAR(MAX), ID) + '/') AS XPATH,                
+        LogFileID AS FOLDER_NAME,                
+        CONVERT(VARCHAR(MAX), CONVERT(VARCHAR(MAX), LogFileID) + '/') AS XNPATH,            
+        FilePath + '/' AS Opath,
+        0
+    FROM QMSDTLSFILE_LOG                 
+    WHERE ACTIVE_STATUS = 1 AND ParentID = 0 AND NodeType = 1;    
 
-    // Add all vessel IDs to the DataTable
-    foreach (var rec in records)
-    {
-        var newRow = dtVessels.NewRow();
-        newRow["VesselID"] = rec.VesselId;
-        dtVessels.Rows.Add(newRow);
-    }
+    INSERT INTO #subfolder    
+    SELECT             
+        DtlLog.ID,                 
+        DtlLog.ParentID AS ParentID,                 
+        CONVERT(VARCHAR(MAX), CONVERT(VARCHAR(MAX), DtlLog.ID) + '/') AS XPATH,                
+        DtlLog.LogFileID AS FOLDER_NAME,                
+        CONVERT(VARCHAR(MAX), CONVERT(VARCHAR(MAX), DtlLog.LogFileID) + '/') AS XNPATH,            
+        DtlLog.FilePath + '/' AS Opath            
+    FROM QMSDTLSFILE_LOG DtlLog            
+    INNER JOIN #ParentFolders ParentList ON ParentList.FOLDER_ID = DtlLog.ParentID            
+    WHERE DtlLog.ACTIVE_STATUS = 1 AND DtlLog.NodeType = 1;     
+END    
+ELSE    
+BEGIN    
+    INSERT INTO #ParentFolders    
+    SELECT      
+        ID AS FOLDER_ID,                 
+        ParentID AS PARENT_FOLDER_ID,                 
+        CONVERT(VARCHAR(MAX), CONVERT(VARCHAR(MAX), ID) + '/') AS XPATH,                
+        LogFileID AS FOLDER_NAME,                
+        CONVERT(VARCHAR(MAX), CONVERT(VARCHAR(MAX), LogFileID) + '/') AS XNPATH,            
+        FilePath + '/' AS Opath 
+    FROM QMSDTLSFILE_LOG                 
+    WHERE ACTIVE_STATUS = 1 AND NodeType = 1 AND ParentID = @FoderID;    
+            
+    INSERT INTO #subfolder           
+    SELECT            
+        DtlLog.ID,                 
+        DtlLog.ParentID AS ParentID,                 
+        CONVERT(VARCHAR(MAX), CONVERT(VARCHAR(MAX), DtlLog.ID) + '/') AS XPATH,                
+        DtlLog.LogFileID AS FOLDER_NAME,                
+        CONVERT(VARCHAR(MAX), CONVERT(VARCHAR(MAX), DtlLog.LogFileID) + '/') AS XNPATH,            
+        DtlLog.FilePath + '/' AS Opath            
+    FROM QMSDTLSFILE_LOG DtlLog            
+    INNER JOIN #ParentFolders ParentList ON ParentList.FOLDER_ID = DtlLog.ParentID            
+    WHERE DtlLog.ACTIVE_STATUS = 1 AND DtlLog.NodeType = 1;    
+END           
 
-    // Decide if we need to delete previous assignments
-    if (deletePreviousAssignments && !records[0].PreviousAssignmentsDeleted)
-    {
-        // Call the SP with replaceAssignments flag set to true
-        if (obj.QMS_Resync_AssignDocToVessel(dtFolders, dtVessels, createdBy) > 0)
-        {
-            isSuccess = true;
-        }
-    }
-    else
-    {
-        // Call the SP for assignment creation with replaceAssignments flag set to false
-        if (obj.QMS_Create_AssignToVessel(dtFolders, dtVessels, createdBy) > 0)
-        {
-            isSuccess = true;
-        }
-    }
+DECLARE @parentID INT, @XPATH VARCHAR(200), @FOLDER_NAME VARCHAR(200), @XNPATH VARCHAR(200), @Opath VARCHAR(200);            
+DECLARE @ChildFolderID INT = 0;           
 
-    // Update the status based on success or failure
-    if (deletePreviousAssignments && !records[0].PreviousAssignmentsDeleted && isSuccess)
-    {
-        obj.UpdatePreviousAssignmentsDeletedStatus(folderAssignmentUid);
-    }
+-- Create cursor to add only one 2nd level folder to subfolder list            
+DECLARE ParentFolderID_Cursor CURSOR FOR                 
+SELECT ID FROM #subfolder;            
 
-    return isSuccess ? 
-        obj.UpdateFolderVesselAssignmentSuccessStatus(folderAssignmentUid) : 
-        obj.UpdateFolderVesselAssignmentFailStatus(folderAssignmentUid);
-}
+DECLARE @fetch_ParentFolderIDs_Cursor INT;              
+OPEN ParentFolderID_Cursor;                
+FETCH NEXT FROM ParentFolderID_Cursor INTO @ChildFolderID;                 
+SET @fetch_ParentFolderIDs_Cursor = @@FETCH_STATUS;                
+
+WHILE @fetch_ParentFolderIDs_Cursor = 0                 
+BEGIN            
+    SELECT @parentID = ParentID, @XPATH = XPATH, @FOLDER_NAME = FOLDER_NAME, @XNPATH = XNPATH, @Opath = Opath 
+    FROM #subfolder 
+    WHERE ID = @ChildFolderID;            
+
+    MERGE INTO #ParentFolders AS TARGET                 
+    USING (VALUES(@ChildFolderID, @parentID, @XPATH, @FOLDER_NAME, @XNPATH, @Opath))                
+    AS SOURCE (FOLDER_ID, PARENT_FOLDER_ID, XPATH, FOLDER_NAME, XNPATH, Opath)                
+    ON TARGET.FOLDER_ID = SOURCE.PARENT_FOLDER_ID                  
+    WHEN MATCHED THEN 
+        UPDATE SET TARGET.HaveChild = 'true';  -- Removed ID_Child and FOLDER_NAME_child
+
+    FETCH NEXT FROM ParentFolderID_Cursor INTO @ChildFolderID;             
+    SET @fetch_ParentFolderIDs_Cursor = @@FETCH_STATUS;             
+END                 
+
+CLOSE ParentFolderID_Cursor;                
+DEALLOCATE ParentFolderID_Cursor;             
+
+SELECT * FROM #ParentFolders ORDER BY FOLDER_NAME;
