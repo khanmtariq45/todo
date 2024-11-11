@@ -2,7 +2,6 @@
 CREATE TABLE #TempIDs (id INT);
 
 -- Insert the results of the recursive CTE into the temporary table
-INSERT INTO #TempIDs (id)
 WITH RecursiveCTE AS (
     SELECT id, parentId, Active_Status
     FROM QMSdtlsFile_Log
@@ -15,11 +14,15 @@ WITH RecursiveCTE AS (
     JOIN RecursiveCTE r ON c.parentId = r.id
     WHERE c.Active_Status = 1
 )
-SELECT count(id) FROM RecursiveCTE;
-SELECT count(id) FROM #TempIDs
+INSERT INTO #TempIDs (id)
+SELECT id FROM RecursiveCTE;
 
--- Update the QMSdtlsFile_Log table
-select * from QMSdtlsFile_Log WHERE id IN (SELECT id FROM #TempIDs)
+-- Count the rows in the temporary table
+SELECT COUNT(id) AS TempIDCount FROM #TempIDs;
+
+-- Select records from QMSdtlsFile_Log where id exists in #TempIDs and Active_Status is 1
+SELECT * FROM QMSdtlsFile_Log
+WHERE id IN (SELECT id FROM #TempIDs)
 AND Active_Status = 1;
 
 -- Clean up the temporary table
