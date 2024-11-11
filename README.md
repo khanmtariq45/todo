@@ -1,28 +1,18 @@
-DECLARE @FolderID INT = 0;
+WITH RecursiveHierarchy AS (
+    -- Start from all folders (including inactive ones)
+    SELECT id, parentId, active_status
+    FROM QMSdtlsFile_Log
 
-WITH RecursiveFolders AS (
-    SELECT @FolderID AS FolderID
     UNION ALL
-    SELECT va.ID
-    FROM QMSdtlsFile_Log va WITH (NOLOCK)
-    INNER JOIN RecursiveFolders rf ON va.ParentID = rf.FolderID
-    WHERE va.nodeType = 1 AND va.active_status = 1
+
+    -- Recursively get all children
+    SELECT f.id, f.parentId, f.active_status
+    FROM QMSdtlsFile_Log f
+    INNER JOIN RecursiveHierarchy rh ON f.parentId = rh.id
 )
-SELECT DISTINCT 
-    va.id, 
-    va.logFileId, 
-    va.parentID,
-    CASE 
-        WHEN EXISTS (
-            SELECT 1 
-            FROM QMSdtlsFile_Log child WITH (NOLOCK)
-            WHERE child.ParentID = va.id 
-              AND child.active_status = 1 
-              AND child.nodeType = 1
-        ) THEN 1 
-        ELSE 0 
-    END AS HasChild
-FROM QMSdtlsFile_Log va WITH (NOLOCK)
-INNER JOIN RecursiveFolders rf ON va.ID = rf.FolderID
-WHERE va.active_status = 1 AND va.nodeType = 1
-OPTION (MAXRECURSION 100);
+
+-- Select all active items whose ancestors are inactive at any level
+SELECT DISTINCT activeChild.id
+FROM RecursiveHierarchy parent
+JOIN RecursiveHierarchy activeChild ON activeChild.parentId = parent.id
+WHERE parent.active_status = 0 order by activeChild.id;  -- Only consider inactive parents
