@@ -1,18 +1,15 @@
-WITH RecursiveHierarchy AS (
-    -- Start from all folders (including inactive ones)
-    SELECT id, parentId, active_status
+-- First, deactivate all descendants of inactive folders
+WITH RecursiveCTE AS (
+    SELECT id, parentId, active
     FROM QMSdtlsFile_Log
-
+    WHERE active = 0 -- Start with inactive parents
+    
     UNION ALL
-
-    -- Recursively get all children
-    SELECT f.id, f.parentId, f.active_status
-    FROM QMSdtlsFile_Log f
-    INNER JOIN RecursiveHierarchy rh ON f.parentId = rh.id
+    
+    SELECT c.id, c.parentId, c.active
+    FROM QMSdtlsFile_Log c
+    JOIN RecursiveCTE r ON c.parentId = r.id
 )
-
--- Select all active items whose ancestors are inactive at any level
-SELECT DISTINCT activeChild.id
-FROM RecursiveHierarchy parent
-JOIN RecursiveHierarchy activeChild ON activeChild.parentId = parent.id
-WHERE parent.active_status = 0 order by activeChild.id;  -- Only consider inactive parents
+UPDATE QMSdtlsFile_Log
+SET active = 0
+WHERE id IN (SELECT id FROM RecursiveCTE);
