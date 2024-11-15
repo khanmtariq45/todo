@@ -1,49 +1,49 @@
-drop table if exists #TempIDs
-CREATE TABLE #TempIDs (id INT);
+Sent by you:
+I am facing an error 
 
-WITH RecursiveCTE AS (
-    SELECT id, Active_Status
-    FROM QMSdtlsFile_Log
-    WHERE Active_Status = 0
-    
-    UNION ALL
-    
-    SELECT c.id, c.Active_Status
-    FROM QMSdtlsFile_Log c
-    JOIN RecursiveCTE r ON c.parentId = r.id
-    WHERE c.Active_Status = 1
-)
-INSERT INTO #TempIDs (id)
-SELECT id FROM RecursiveCTE where Active_Status = 1;
+Some Error occured. Error: Error: Method: saveOrUpdateLinkDocument
+Class: LinkedDocumentBLL
+Error: QueryFailedError: Error: Transaction (Process ID 110) was deadlocked on lock resources with another process and
+has been chosen as the deadlock victim. Rerun the transaction.
 
-UPDATE QMSdtlsFile_Log
-SET active_status = 0, Date_Of_Deletion = GETDATE(), Deleted_By = 769
-WHERE id IN (SELECT id FROM #TempIDs);
 
-DELETE FROM qms.full_text_content 
-WHERE document_id IN (SELECT id FROM #TempIDs);
+while my api is 
 
-DECLARE @DocID INT;
 
-DECLARE doc_cursor CURSOR FOR
-SELECT id FROM #TempIDs
+exports.post = async function (req: Request, res: Response) {
+    let userId;
+    try {
+        userId = AccessRights.getUserIdFromReq(req);
+        let reqObjects = req.body.LinkedDocumentList;
+        const result = await Promise.all(reqObjects.map(obj => new LinkedDocumentBLL().saveOrUpdateLinkDocument(obj, userId)));
+        if (result) {
+            log.info(HttpStaus.OK, req['query'], 'save-page-number', userId, eModuleCode.Infra, eFunctionCode.LinkedDocument);
+            res.status(HttpStaus.OK).send(result);
+        }
+    } catch (error) {
+        log.error(error, req['query'], 'save-page-number', userId, eModuleCode.Infra, eFunctionCode.LinkedDocument);
+        res.status(HttpStaus.INTERNAL_SERVER_ERROR).send(`Some Error occured. Error: ${error}`);
+    }
+}
 
-OPEN doc_cursor;
 
-FETCH NEXT FROM doc_cursor INTO @DocID;
+ async saveOrUpdateLinkDocument(objLinkedDocument, userId) {
+        try {
+            const saveHelpObject = {
+                ...objLinkedDocument
+            };
+            const QMS_Document_Linking = await getManager().findOne(QMS_DocumentLinking, { where: { uid: saveHelpObject.uid} });
+            
+            if(QMS_Document_Linking) {
+                saveHelpObject.date_of_modification = await this.getSystemDateOffset();
+                saveHelpObject.modified_by= userId;
+            } else {
+                saveHelpObject.created_by = userId
+            }
+            let result = await getManager().save(QMS_DocumentLinking, saveHelpObject);
 
-WHILE @@FETCH_STATUS = 0
-BEGIN
-   declare @SQL_UPDATE1 varchar(1000) = FORMATMESSAGE('DELETE FROM qms.full_text_content WHERE document_id=%d', @DocID);
-   exec SYNC_SP_DataSynchronizer_DataLog null, null, null, 0, @SQL_UPDATE1
-
-   DECLARE @SQL_UPDATE2 VARCHAR(1000) = FORMATMESSAGE('UPDATE QMSdtlsFile_Log SET active_status = 0, Date_Of_Deletion = GETDATE(), Deleted_By = 769 WHERE id=%d', @DocID);
-   EXEC SYNC_SP_DataSynchronizer_DataLog NULL, NULL, NULL, 0, @SQL_UPDATE2;
-
-   FETCH NEXT FROM doc_cursor INTO @DocID;
-END
-
-CLOSE doc_cursor;
-DEALLOCATE doc_cursor;
-
-DROP TABLE #TempIDs;
+            return result; 
+        } catch (error) {
+            throw new Error(`Method: saveOrUpdateLinkDocument \nClass: LinkedDocumentBLL \nError: ${error}`);
+        }
+    }
