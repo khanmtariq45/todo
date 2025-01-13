@@ -14,8 +14,8 @@ class Program
         Console.WriteLine("Is the console app being run locally or on the server? (local/server): ");
         string environment = Console.ReadLine().Trim().ToLower();
 
-        string connectionString = environment == "local" 
-            ? "data source=dev.c5owyuw64shd.ap-south-1.rds.amazonaws.com,1982;database=JIBE_Main;uid=j2;pwd=123456;max pool size=200;" 
+        string connectionString = environment == "local"
+            ? "data source=dev.c5owyuw64shd.ap-south-1.rds.amazonaws.com,1982;database=JIBE_Main;uid=j2;pwd=123456;max pool size=200;"
             : GetConnectionStringFromUser();
 
         Console.WriteLine("Please enter the folder path: ");
@@ -23,7 +23,11 @@ class Program
 
         if (!Directory.Exists(rootDirectory))
         {
+            Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine("Invalid directory path.");
+            Console.ResetColor();
+            Console.WriteLine("Press any key to exit...");
+            Console.ReadKey();
             return;
         }
 
@@ -48,16 +52,27 @@ class Program
             try
             {
                 ProcessFile(originalFilePath, connectionString, logBuilder);
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"Successfully processed: {originalFilePath}");
             }
             catch (Exception ex)
             {
-                logBuilder.AppendLine($"Error processing file {originalFilePath}: {ex.Message}");
+                Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine($"Error processing file {originalFilePath}: {ex.Message}");
+                logBuilder.AppendLine($"Error processing file {originalFilePath}: {ex.Message}");
+            }
+            finally
+            {
+                Console.ResetColor();
             }
         }
 
         File.WriteAllText(logFilePath, logBuilder.ToString());
+        Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("Processing completed. Logs saved to " + logFilePath);
+        Console.ResetColor();
+        Console.WriteLine("Press any key to exit...");
+        Console.ReadKey();
     }
 
     static string GetConnectionStringFromUser()
@@ -94,7 +109,6 @@ class Program
         string outputFilePath = Path.Combine(fileDirectory, Path.GetFileNameWithoutExtension(fileName) + ".docx");
         document.SaveToFile(outputFilePath, FileFormat.Docx2013);
 
-        Console.WriteLine($"Converted {originalFilePath} to {outputFilePath} successfully.");
         logBuilder.AppendLine($"Processed File: {originalFilePath}, Converted: Yes, Output File: {outputFilePath}");
     }
 
