@@ -31,8 +31,11 @@ class Program
             return;
         }
 
-        StringBuilder logBuilder = new StringBuilder();
-        string logFilePath = @"C:\Logs\FileLogs.txt";
+        StringBuilder successLogBuilder = new StringBuilder();
+        StringBuilder errorLogBuilder = new StringBuilder();
+
+        string successLogFilePath = @"C:\Logs\SuccessLog.txt";
+        string errorLogFilePath = @"C:\Logs\ErrorLog.txt";
         Directory.CreateDirectory(@"C:\Logs");
 
         HashSet<string> processedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -51,7 +54,7 @@ class Program
 
             try
             {
-                ProcessFile(originalFilePath, rootDirectory, connectionString, logBuilder);
+                ProcessFile(originalFilePath, rootDirectory, connectionString, successLogBuilder);
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.WriteLine($"Successfully processed: {originalFilePath}");
             }
@@ -59,7 +62,7 @@ class Program
             {
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine($"Error processing file {originalFilePath}: {ex.Message}");
-                logBuilder.AppendLine($"Error processing file {originalFilePath}: {ex.Message}");
+                errorLogBuilder.AppendLine($"File: {originalFilePath}, Error: {ex.Message}");
             }
             finally
             {
@@ -67,9 +70,12 @@ class Program
             }
         }
 
-        File.WriteAllText(logFilePath, logBuilder.ToString());
+        File.WriteAllText(successLogFilePath, successLogBuilder.ToString());
+        File.WriteAllText(errorLogFilePath, errorLogBuilder.ToString());
+
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine("Processing completed. Logs saved to " + logFilePath);
+        Console.WriteLine($"Processing completed. Success log saved to {successLogFilePath}");
+        Console.WriteLine($"Error log saved to {errorLogFilePath}");
         Console.ResetColor();
         Console.WriteLine("Press any key to exit...");
         Console.ReadKey();
@@ -81,7 +87,7 @@ class Program
         return Console.ReadLine();
     }
 
-    static void ProcessFile(string originalFilePath, string rootDirectory, string connectionString, StringBuilder logBuilder)
+    static void ProcessFile(string originalFilePath, string rootDirectory, string connectionString, StringBuilder successLogBuilder)
     {
         string fileName = Path.GetFileName(originalFilePath);
         string updatedFileName = GetFileNameFromDatabase(fileName, connectionString);
@@ -104,16 +110,14 @@ class Program
         string cleanedHtml = PreprocessHtml(originalFilePath);
         cleanedHtml = DecodeObfuscatedEmails(cleanedHtml);
 
-        string tempHtmlFilePath = Path.Combine(outputDirectory, "cleaned_temp.html");
-        File.WriteAllText(tempHtmlFilePath, cleanedHtml);
-
+        // Load HTML content directly into Spire.Doc without saving a temporary file
         Document document = new Document();
-        document.LoadFromFile(tempHtmlFilePath);
+        document.LoadText(cleanedHtml, FileFormat.Html);
 
         string outputFilePath = Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(fileName) + ".docx");
         document.SaveToFile(outputFilePath, FileFormat.Docx2013);
 
-        logBuilder.AppendLine($"Processed File: {originalFilePath}, Converted: Yes, Output File: {outputFilePath}");
+        successLogBuilder.AppendLine($"Processed File: {originalFilePath}, Converted: Yes, Output File: {outputFilePath}");
     }
 
     static string PreprocessHtml(string filePath)
