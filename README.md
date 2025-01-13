@@ -107,6 +107,7 @@ class Program
             fileName = updatedFileName + Path.GetExtension(originalFilePath);
         }
 
+        // Preprocess and clean the HTML content, then convert to Word (.docx)
         string cleanedHtml = PreprocessHtml(originalFilePath);
         cleanedHtml = DecodeObfuscatedEmails(cleanedHtml);
 
@@ -114,6 +115,7 @@ class Program
         Document document = new Document();
         document.LoadText(cleanedHtml, FileFormat.Html);
 
+        // Save the file only as .docx
         string outputFilePath = Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(fileName) + ".docx");
         document.SaveToFile(outputFilePath, FileFormat.Docx2013);
 
@@ -177,13 +179,20 @@ class Program
 
     static string GetFileNameFromDatabase(string fileName, string connectionString)
     {
-        string query = "SELECT LogFileID FROM qmsdtlsfile_log WHERE FilePath LIKE @fileName";
-        using (var connection = new SqlConnection(connectionString))
+        try
         {
-            var command = new SqlCommand(query, connection);
-            command.Parameters.AddWithValue("@fileName", "%" + fileName + "%");
-            connection.Open();
-            return command.ExecuteScalar()?.ToString();
+            string query = "SELECT LogFileID FROM qmsdtlsfile_log WHERE FilePath LIKE @fileName";
+            using (var connection = new SqlConnection(connectionString))
+            {
+                var command = new SqlCommand(query, connection);
+                command.Parameters.AddWithValue("@fileName", "%" + fileName + "%");
+                connection.Open();
+                return command.ExecuteScalar()?.ToString();
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new Exception("Error querying the database: " + ex.Message);
         }
     }
 
