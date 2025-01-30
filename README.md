@@ -1,6 +1,6 @@
-DECLARE @Today datetime = GETDATE(), @Source char = 's', @Status char = 'p';
+.DECLARE @Today datetime = GETDATE(), @Source char = 's', @Status char = 'p';
 
--- Step 1: Identify the latest approved version with the maximum level for each QMSID
+-- Step 1: Identify the latest version for each QMSID
 WITH LatestVersion AS (
     SELECT QMSID,
         MAX(Version) AS LatestVersion
@@ -11,7 +11,21 @@ WITH LatestVersion AS (
     GROUP BY 
         QMSID
 ),
-ApprovedLatestVersion AS (
+-- Step 2: Find the MAX LEVEL for the latest version (even if not approved)
+MaxLevel AS (
+    SELECT 
+        QMSID,
+        MAX(LevelID) AS MaxLevelID,
+        Version
+    FROM 
+        QMS_FILE_APPROVAL
+    WHERE 
+        Active_Status = 1
+    GROUP BY 
+        QMSID, Version
+),
+-- Step 3: Check if the MAX LEVEL is approved
+ApprovedMaxLevel AS (
     SELECT 
         fa.QMSID,
         fa.LevelID,
@@ -19,24 +33,14 @@ ApprovedLatestVersion AS (
     FROM 
         QMS_FILE_APPROVAL fa
     INNER JOIN 
-        LatestVersion lv
-    ON 
-        fa.QMSID = lv.QMSID AND fa.Version = lv.LatestVersion
+        MaxLevel ml ON fa.QMSID = ml.QMSID 
+        AND fa.Version = ml.Version 
+        AND fa.LevelID = ml.MaxLevelID
     WHERE 
-        fa.ApprovalStatus = 1
-),
-MaxLevelApproved AS (
-    SELECT 
-        QMSID,
-        MAX(LevelID) AS MaxLevelID,
-        Version
-    FROM 
-        ApprovedLatestVersion
-    GROUP BY 
-        QMSID, Version
+        fa.ApprovalStatus = 1 -- Only include if MAX LEVEL is approved
 )
 
--- Step 2: Join with relevant tables and insert into the ledger for which assignment is created but ledger is missing
+-- Step 4: Insert into the ledger ONLY if MAX LEVEL is approved
 INSERT INTO qms_file_vessel_sync_ledger
    (vessel_assignment_id, date_of_creation, [status], [source], file_version)
 SELECT DISTINCT 
@@ -57,8 +61,8 @@ INNER JOIN
     AND fl.Active_Status = 1 
     AND fl.NodeType = 0
 INNER JOIN 
-    MaxLevelApproved mla ON fl.ID = mla.QMSID 
-    AND fl.Version = mla.Version
+    ApprovedMaxLevel aml ON fl.ID = aml.QMSID 
+    AND fl.Version = aml.Version
 WHERE 
     va.Active_Status = 1
     AND NOT EXISTS (
