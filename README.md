@@ -1,7 +1,8 @@
+DECLARE @Today datetime = GETDATE(), @Source char = 's', @Status char = 'p';
+
 -- Step 1: Identify the latest approved version with the maximum level for each QMSID
 WITH LatestVersion AS (
-    SELECT 
-        QMSID,
+    SELECT QMSID,
         MAX(Version) AS LatestVersion
     FROM 
         QMS_FILE_APPROVAL
@@ -22,7 +23,7 @@ ApprovedLatestVersion AS (
     ON 
         fa.QMSID = lv.QMSID AND fa.Version = lv.LatestVersion
     WHERE 
-        fa.ApprovalStatus = 'Approved' -- Assuming 'Approved' is the status for approved files
+        fa.ApprovalStatus = 1
 ),
 MaxLevelApproved AS (
     SELECT 
@@ -35,15 +36,15 @@ MaxLevelApproved AS (
         QMSID, Version
 )
 
--- Step 2: Join with relevant tables and insert into the ledger
+-- Step 2: Join with relevant tables and insert into the ledger for which assignment is created but ledger is missing
 INSERT INTO qms_file_vessel_sync_ledger
-    (vessel_assignment_id, date_of_creation, [status], [source], file_version)
+   (vessel_assignment_id, date_of_creation, [status], [source], file_version)
 SELECT DISTINCT 
-    va.ID, 
-    @Today, 
-    @Status, 
-    @Source, 
-    va.FileVersion
+   va.ID, 
+   @Today, 
+   @Status, 
+   @Source, 
+   va.FileVersion
 FROM 
     QMS_DTL_Vessel_Assignment va
 INNER JOIN 
@@ -56,7 +57,7 @@ INNER JOIN
     AND fl.Active_Status = 1 
     AND fl.NodeType = 0
 INNER JOIN 
-    MaxLevelApproved mla ON fl.QMSID = mla.QMSID 
+    MaxLevelApproved mla ON fl.ID = mla.QMSID 
     AND fl.Version = mla.Version
 WHERE 
     va.Active_Status = 1
