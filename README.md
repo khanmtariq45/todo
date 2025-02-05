@@ -1,90 +1,39 @@
-DECLARE @SQL_Script NVARCHAR(MAX);
+ public void OpenFileExternal(string url, string fileName)
+    {
+        string filepath = Server.MapPath(url);
+        FileInfo file = new FileInfo(filepath);
+        bool IE = Request.UserAgent.IndexOf("MSIE") > -1;
 
-SET @SQL_Script = N'
--- Office side Backup
-EXEC [inf].[utils_inf_backup_table] ''qms_file_vessel_sync_ledger'';
+        if (file.Exists)
+        {
+            string fileContent = "";
+            if (file.Extension == ".html" || file.Extension == ".htm")
+            {
+                fileContent = File.ReadAllText(filepath);
 
-DECLARE @Today datetime = GETDATE(), @Source char = ''s'', @Status char = ''p'';
-
--- Step 1: Identify the latest version for each QMSID
-WITH LatestVersion AS (
-    SELECT 
-        QMSID, 
-        MAX(Version) AS LatestVersion
-    FROM 
-        QMS_FILE_APPROVAL WITH (NOLOCK)
-    WHERE 
-        Active_Status = 1
-    GROUP BY 
-        QMSID
-),
--- Step 2: Find the MAX LEVEL for the latest version (even if not approved)
-MaxLevel AS (
-    SELECT 
-        QMSID,
-        MAX(LevelID) AS MaxLevelID,
-        Version
-    FROM 
-        QMS_FILE_APPROVAL WITH (NOLOCK)
-    WHERE 
-        Active_Status = 1
-    GROUP BY 
-        QMSID, Version
-),
--- Step 3: Check if the MAX LEVEL is approved
-ApprovedMaxLevel AS (
-    SELECT 
-        fa.QMSID,
-        fa.LevelID,
-        fa.Version
-    FROM 
-        QMS_FILE_APPROVAL fa WITH (NOLOCK)
-    INNER JOIN 
-        MaxLevel ml ON fa.QMSID = ml.QMSID 
-        AND fa.Version = ml.Version 
-        AND fa.LevelID = ml.MaxLevelID
-    WHERE 
-        fa.ApprovalStatus = 1 -- Only include if MAX LEVEL is approved
-)
-
--- Step 4: Insert into the ledger ONLY if MAX LEVEL is approved
-INSERT INTO qms_file_vessel_sync_ledger
-   (vessel_assignment_id, date_of_creation, [status], [source], file_version)
-SELECT DISTINCT 
-   va.ID, 
-   @Today, 
-   @Status, 
-   @Source, 
-   va.FileVersion
-FROM 
-    QMS_DTL_Vessel_Assignment va
-INNER JOIN 
-    LIB_VESSELS lv ON va.Vessel_ID = lv.Vessel_ID 
-    AND lv.Active_Status = 1 
-    AND lv.INSTALLATION = 1
-INNER JOIN 
-    QMSdtlsFile_Log fl ON va.Document_ID = fl.ID 
-    AND fl.Version = va.FileVersion 
-    AND fl.Active_Status = 1 
-    AND fl.NodeType = 0
-INNER JOIN 
-    ApprovedMaxLevel aml ON fl.ID = aml.QMSID 
-    AND fl.Version = aml.Version
-WHERE 
-    va.Active_Status = 1
-    AND NOT EXISTS (
-        SELECT 1
-        FROM qms_file_vessel_sync_ledger l
-        WHERE va.ID = l.vessel_assignment_id
-    );
-';
-
-select @SQL_Script
-
-
-EXEC [inf].[register_script_for_execution] 
-    'My Module', 
-    'My Function', 
-    'DB Change 12345 - Modify Data', 
-    'O', 
-    @SQL_Script;
+                // Decode obfuscated email addresses
+                fileContent = DecodeObfuscatedEmails(fileContent);
+                // Replace specific characters
+                fileContent = fileContent.Replace("’", "'").Replace("‘", "'").Replace("“", "\"").Replace("”", "\"").Replace("&nbsp;", " ").Replace(" ", " "); // Non-breaking space;               
+            }
+            Response.ClearContent();
+            if (!IE)
+                Response.AddHeader("Content-Disposition", "attachment; filename=" + fileName);
+            else
+                Response.AddHeader("Content-Disposition", "inline; filename=" + fileName);
+            Response.AddHeader("Content-Length", file.Length.ToString());
+            HttpContext.Current.Response.AddHeader("Vary", "Accept-Encoding");
+            HttpContext.Current.Response.Buffer = true;
+            Response.ContentType = objQMS.GetContentTypeByExtension(file.Extension.ToLower());
+            if (file.Extension == ".html" || file.Extension == ".htm")
+            {
+                UDFLib.WriteExceptionLog(new Exception("Content Length: " + System.Text.Encoding.UTF8.GetByteCount(fileContent) + " Final Processed HTML: " + "(" + fileContent + ")"));
+                Response.Write(fileContent);
+            }
+            else
+            {
+                Response.TransmitFile(file.FullName);
+            }
+            Response.End();
+        }
+    }
