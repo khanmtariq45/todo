@@ -26,7 +26,8 @@ public void OpenFileExternal(string url, string fileName)
         }
 
         // Detect Internet Explorer or legacy Edge
-        bool isIE = Request.UserAgent.Contains("MSIE") || Request.UserAgent.Contains("Trident/");
+        bool isIE = Request.UserAgent.IndexOf("MSIE", StringComparison.Ordinal) > -1 || 
+                    Request.UserAgent.IndexOf("Trident/", StringComparison.Ordinal) > -1;
 
         // Encode filename for use in headers
         string encodedFileName = Uri.EscapeDataString(sanitizedFileName);
