@@ -2,7 +2,6 @@ public void OpenFileExternal(string url, string fileName)
 {
     string filepath = Server.MapPath(url);
     FileInfo file = new FileInfo(filepath);
-    bool isIE = Request.UserAgent.IndexOf("MSIE") > -1;
 
     if (file.Exists)
     {
@@ -19,12 +18,13 @@ public void OpenFileExternal(string url, string fileName)
 
         Response.ClearContent();
 
-        // Preserve the filename as is
-        string contentDisposition = isIE
-            ? $"inline; filename=\"{fileName}\"" // For IE
-            : $"attachment; filename=\"{fileName}\"; filename*=UTF-8''{Uri.EscapeDataString(fileName)}"; // For modern browsers
+        // Sanitize the filename for older browsers
+        string sanitizedFileName = SanitizeFileName(fileName);
 
+        // Set Content-Disposition header
+        string contentDisposition = $"attachment; filename=\"{sanitizedFileName}\"; filename*=UTF-8''{Uri.EscapeDataString(fileName)}";
         Response.AddHeader("Content-Disposition", contentDisposition);
+
         Response.AddHeader("Content-Length", file.Length.ToString());
         HttpContext.Current.Response.AddHeader("Vary", "Accept-Encoding");
         HttpContext.Current.Response.Buffer = true;
@@ -42,4 +42,23 @@ public void OpenFileExternal(string url, string fileName)
 
         Response.End();
     }
+}
+
+// Helper method to sanitize filenames for older browsers
+private string SanitizeFileName(string fileName)
+{
+    // Replace invalid characters with underscores
+    char[] invalidChars = Path.GetInvalidFileNameChars();
+    foreach (char invalidChar in invalidChars)
+    {
+        fileName = fileName.Replace(invalidChar, '_');
+    }
+
+    // Ensure the filename is not empty
+    if (string.IsNullOrEmpty(fileName))
+    {
+        fileName = "file";
+    }
+
+    return fileName;
 }
