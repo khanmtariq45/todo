@@ -23,7 +23,7 @@ public void OpenFileExternal(string url, string fileName)
 
         // Preserve special characters (e.g., ..., ~) in the filename
         string encodedFileName = fileName.Replace("\"", ""); // Remove quotes to avoid breaking the header
-        encodedFileName = Uri.EscapeDataString(encodedFileName).Replace("~", "%7E"); // Preserve ~
+        encodedFileName = Uri.EscapeDataString(encodedFileName).Replace("%7E", "~"); // Preserve ~
 
         // Read and process file content if it's HTML
         string fileContent = "";
@@ -36,7 +36,7 @@ public void OpenFileExternal(string url, string fileName)
             // Replace specific characters
             fileContent = fileContent
                 .Replace("’", "'")
-                .Replace("‘", "'")
+                .Replace("’", "'")
                 .Replace("“", "\"")
                 .Replace("”", "\"")
                 .Replace("&nbsp;", " ")
