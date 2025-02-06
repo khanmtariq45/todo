@@ -1,44 +1,45 @@
-I have a filename ~~~sloman.pdf which is converting to _~~sloman.pdf
-
-Please resolve that issue 
-
 public void OpenFileExternal(string url, string fileName)
+{
+    string filepath = Server.MapPath(url);
+    FileInfo file = new FileInfo(filepath);
+    bool isIE = Request.UserAgent.IndexOf("MSIE") > -1;
+
+    if (file.Exists)
     {
-        string filepath = Server.MapPath(url);
-        FileInfo file = new FileInfo(filepath);
-        bool IE = Request.UserAgent.IndexOf("MSIE") > -1;
-        string encodedFileName = Uri.EscapeDataString(fileName);
-
-        if (file.Exists)
+        string fileContent = "";
+        if (file.Extension == ".html" || file.Extension == ".htm")
         {
-            string fileContent = "";
-            if (file.Extension == ".html" || file.Extension == ".htm")
-            {
-                fileContent = File.ReadAllText(filepath);
+            fileContent = File.ReadAllText(filepath);
 
-                // Decode obfuscated email addresses
-                fileContent = DecodeObfuscatedEmails(fileContent);
-                // Replace specific characters
-                fileContent = fileContent.Replace("’", "'").Replace("‘", "'").Replace("“", "\"").Replace("”", "\"").Replace("&nbsp;", " ").Replace(" ", " "); // Non-breaking space;               
-            }
-            Response.ClearContent();
-            if (!IE)
-                Response.AddHeader("Content-Disposition", "attachment; filename=" + encodedFileName);
-            else
-                Response.AddHeader("Content-Disposition", "inline; filename=" + encodedFileName);
-            Response.AddHeader("Content-Length", file.Length.ToString());
-            HttpContext.Current.Response.AddHeader("Vary", "Accept-Encoding");
-            HttpContext.Current.Response.Buffer = true;
-            Response.ContentType = objQMS.GetContentTypeByExtension(file.Extension.ToLower());
-            if (file.Extension == ".html" || file.Extension == ".htm")
-            {
-                UDFLib.WriteExceptionLog(new Exception("Content Length: " + System.Text.Encoding.UTF8.GetByteCount(fileContent) + " Final Processed HTML: " + "(" + fileContent + ")"));
-                Response.Write(fileContent);
-            }
-            else
-            {
-                Response.TransmitFile(file.FullName);
-            }
-            Response.End();
+            // Decode obfuscated email addresses
+            fileContent = DecodeObfuscatedEmails(fileContent);
+            // Replace specific characters
+            fileContent = fileContent.Replace("’", "'").Replace("‘", "'").Replace("“", "\"").Replace("”", "\"").Replace("&nbsp;", " ").Replace(" ", " "); // Non-breaking space;               
         }
+
+        Response.ClearContent();
+
+        // Preserve the filename as is
+        string contentDisposition = isIE
+            ? $"inline; filename=\"{fileName}\"" // For IE
+            : $"attachment; filename=\"{fileName}\"; filename*=UTF-8''{Uri.EscapeDataString(fileName)}"; // For modern browsers
+
+        Response.AddHeader("Content-Disposition", contentDisposition);
+        Response.AddHeader("Content-Length", file.Length.ToString());
+        HttpContext.Current.Response.AddHeader("Vary", "Accept-Encoding");
+        HttpContext.Current.Response.Buffer = true;
+        Response.ContentType = objQMS.GetContentTypeByExtension(file.Extension.ToLower());
+
+        if (file.Extension == ".html" || file.Extension == ".htm")
+        {
+            UDFLib.WriteExceptionLog(new Exception("Content Length: " + System.Text.Encoding.UTF8.GetByteCount(fileContent) + " Final Processed HTML: " + "(" + fileContent + ")"));
+            Response.Write(fileContent);
+        }
+        else
+        {
+            Response.TransmitFile(file.FullName);
+        }
+
+        Response.End();
     }
+}
