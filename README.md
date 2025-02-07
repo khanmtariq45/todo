@@ -1,8 +1,17 @@
-CREATE PROCEDURE [dbo].[SP_Update_Menu_Access]
+Now we need to create SP_Update_Menu_Access SP and we will send this SP as @SQL_Script to register_script_for_execution for execution 
+
+EXEC [inf].[register_script_for_execution] 
+    'QMS', 
+    'QMS_Document', 
+    'DB Change 983951: QMS_Stage 2 (Portofino vessel)_J3 Search is not working', 
+    'O', 
+    @SQL_Script;
+
+CREATE OR ALTER PROCEDURE [dbo].[SP_Update_Menu_Access]
     @VesselName VARCHAR(200),
     @MainMenuName VARCHAR(200),
     @MenuName VARCHAR(200),
-    @MenuID VARCHAR(50) -- Assuming it's a string (GUID format)
+    @MenuID VARCHAR(200)
 AS
 BEGIN
     SET NOCOUNT ON;
