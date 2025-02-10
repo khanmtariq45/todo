@@ -1,73 +1,298 @@
-DECLARE @SQL_Script NVARCHAR(MAX);
+ private void LedgerRecordsSyncProcess()
+        {
+            int latestVesselAssignmentId = -1;
+            QmsAutoSyncConfiguration config;
 
-SET @SQL_Script = '
-Declare @VesselId int;
-Declare @VesselName varchar(200) = ''Niara'';
-Select @VesselId = Vessel_ID from lib_vessels where Vessel_Name=@VesselName;
+            while (true)
+            {
+                try
+                {
+                    config = objQms.getConfigDetails();
+                    _logLevel = config.LogLevel;
+                    UDFLib.LogDebug("LedgerRecordsSyncProcess", "Getting records from ledger", _logLevel);
+                    var records = objQms.GetRecordsFromLedger(config.ProcessingBatchSize,
+                        latestVesselAssignmentId);
+                    UDFLib.LogDebug("LedgerRecordsSyncProcess", "latestVesselAssignmentId is: " + latestVesselAssignmentId, _logLevel);
+                    UDFLib.LogDebug("LedgerRecordsSyncProcess", "Got " + records.Count + " ledger records", _logLevel);
+                    UDFLib.LogDebug("LedgerRecordsSyncProcess", "QMS config values - SyncToVesselMaxRetries: " + config.SyncToVesselMaxRetries + ", VerificationRequestMaxRetries: " + config.VerificationRequestMaxRetries, _logLevel);
 
-DECLARE @script nvarchar(max) = ''
-			EXEC [inf].[utils_inf_backup_table] ''''INF_LIB_Nav_Modules''''
-			
-			EXEC [inf].[utils_inf_backup_table] ''''INF_LIB_Screens''''
+                    if (records.Count != 0)
+                    {
+                        latestVesselAssignmentId = records[records.Count - 1].VesselAssignId;
+                    }
 
-	DELETE from INF_LIB_Nav_Modules where Name = ''''Document Viewer''''
-	IF not exists (SELECT * from INF_LIB_Nav_Modules where Name = ''''Document Viewer'''')
-		BEGIN
-        INSERT INTO INF_LIB_Nav_Modules (Module_ID, Project_ID, Screen_ID, Name, Image_Path, Default_Module, Created_By, Date_Of_Creation,Active_Status, Display_Order)
-        VALUES((SELECT isnull(Max(Module_ID),0)+1 from INF_LIB_Nav_Modules), (SELECT Project_ID from INF_LIB_Nav_Projects WHERE Name = ''''Quality''''),  0
-        ,''''Document Viewer'''', NULL,0,1,GETDATE(),1,NULL)
-	END
-	
-	DELETE from INF_LIB_Screens where Screen_Name = ''''Document Viewer''''
-	IF not exists (SELECT * from INF_LIB_Screens where Screen_Name = ''''Document Viewer'''')
-		BEGIN
-        insert into INF_LIB_Screens (Screen_ID, Module_ID, Screen_Name, Class_Name, Assembly_Name, Screen_Type, Image_Path, Created_By, Date_Of_Creation, Active_Status)
-        values ((SELECT isnull(max(Screen_ID) , 0)+1  from INF_LIB_Screens ),(SELECT Module_ID from INF_LIB_Nav_Modules where name = ''''Document Viewer''''),
-        ''''Document Viewer'''',''''J2Landing.J2LandingPage#/qms/document/D4D44BEEF21627A6466DBBF45608247C'''',''''J2Landing'''',2,NULL,1,GETDATE(),1)
-	END
+                    var ledgerRecordsDic = objQms.GroupByLedgerRecordsByVessel(records);
 
-	IF exists (SELECT * from INF_LIB_Nav_Modules where Name = ''''Document Viewer'''')
-    BEGIN
-		update INF_LIB_Nav_Modules
-		set Screen_ID = (SELECT Screen_ID from INF_LIB_Screens where Screen_Name = ''''Document Viewer'''')
-		where Name = ''''Document Viewer''''
-    END
+                    var opt = new ParallelOptions() { MaxDegreeOfParallelism = config.AutoSyncVesselParalellismDegree };
+                    Parallel.ForEach(ledgerRecordsDic, opt, entry =>
+                    {
+                        UDFLib.LogDebug("LedgerRecordsSyncProcess", "Processing vessel: " + entry.Key + ", number of assignments: " + entry.Value.Count, _logLevel);
+                        var syncVerificationRequestBatch = new List<Tuple<FileSyncLedgerRecord, bool>>();
 
-	    IF Exists(SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N''''[dbo].[INF_DTL_Vessel_Rank_Menu_Acess]'''') AND type in (N''''U''''))
-       BEGIN
-		EXEC [inf].[utils_inf_backup_table] ''''INF_DTL_Vessel_Rank_Menu_Acess''''
-       END
-	
-	DECLARE @tempCrwRanksId table(CrId int)
-    DECLARE @maxMenuId int=0, @screenId int=0
-    INSERT INTO @tempCrwRanksId
-    SELECT ID from CRW_LIB_Crew_Ranks where Rank_Short_Name in(''''MST'''',''''CPT'''',''''MSTR'''',''''C/O'''',''''C/OFF'''',''''C/E'''',''''2/E'''',''''C/OF'''' , ''''MST1'''') and Active_Status=1
-    SELECT @screenId = Screen_ID FROM INF_LIB_Screens where Screen_Name=''''Document Viewer''''
-    DECLARE @RNO1 as INT=0, @RNOPre1 as INT=0,@UpdatedRankID INT=0
-    SELECT TOP 1 @RNO1=ROW_NUMBER() OVER(ORDER BY CrId ASC),@UpdatedRankID=CrId FROM @tempCrwRanksId
-        WHILE @RNO1 > 0
-    BEGIN
-    SELECT @maxMenuId= ISNULL(MAX(Menu_ID),0)+1 FROM INF_DTL_Vessel_Rank_Menu_Acess
-    IF NOT EXISTS(SELECT Menu_ID FROM INF_DTL_Vessel_Rank_Menu_Acess WHERE Rank_ID=@UpdatedRankID and Screen_ID=@screenId)
-      BEGIN
-          INSERT INTO  INF_DTL_Vessel_Rank_Menu_Acess (Menu_ID,Vessel_ID,Rank_ID,Screen_ID,Access_Menu,Access_View,Access_Add,Access_Edit,Access_Delete,Access_Approve,
-          Created_By,Date_Of_Creation,Modified_By,Date_Of_Modified,Deleted_By,Date_Of_Deleted,Active_Status) -- ,uid)
-          VALUES(@maxMenuId,0,@UpdatedRankID,@screenId,1,1,1,1,1,1,
-          1,GETDATE(),NULL,NULL,NULL,NULL,1) -- ,newid())
-      END
-    SET @RNOPre1 =@RNO1
-      SET @RNO1=0
-      SELECT  TOP 1  @RNO1=RNO , @UpdatedRankID=CrId
-      FROM (SELECT ROW_NUMBER() OVER(ORDER BY CrId ASC)as RNO,CrId FROM @tempCrwRanksId )tbl where tbl.RNO > @RNOPre1
-    END
-'';
+                        var opt1 = new ParallelOptions() { MaxDegreeOfParallelism = config.AutoSyncAssignmentParalellismDegree };
+                        Parallel.ForEach(entry.Value, opt1, rec =>
+                        {
+                            UDFLib.LogTrace("LedgerRecordsSyncProcess", "Processing assignment: " + rec.VesselAssignId
+                                + " for file: " + rec.FileId + ", vessel: " + rec.VesselId + " status: " + rec.Status, _logLevel);
+                            UDFLib.LogTrace("LedgerRecordsSyncProcess", "RetryCount: " + rec.RetryCount + ", VerificationRequestRetryCount: " + rec.VerificationRequestRetryCount, _logLevel);
+                            if (rec.RetryCount < config.SyncToVesselMaxRetries &&
+                                rec.VerificationRequestRetryCount < config.VerificationRequestMaxRetries)
+                            {
+                                if (rec.AssignmentFileVersion != rec.FileVersion)
+                                {
+                                    rec.FileVersion = rec.AssignmentFileVersion;
+                                    rec.RetryCount = 0;
+                                    rec.VerificationRequestRetryCount = 0;
 
-EXEC [SYNC_SP_DataSynchronizer_DataLog] '''', '''', '''', @VesselId, @script;
-';
+                                    //Seting to pending to make sure proper version is saved in the Pending section and synced if not previously synced.
+                                    rec.Status = QMSEnums.QmsFileSyncStatusEnum.Pending;
+                                    objQms.ResetLedgerRecord(rec.VesselAssignId, (char)rec.Status, rec.AssignmentFileVersion);
+                                }
 
-EXEC [inf].[register_script_for_execution] 
-    'QMS', 
-    'QMS_Document', 
-    'DB Change 1111', 
-    'O', 
-    @SQL_Script;
+                                switch (rec.Status)
+                                {
+                                    case QMSEnums.QmsFileSyncStatusEnum.Pending:
+                                        // Checking if we already synced the records before.
+                                        var newAssigment = !objQms.IsSentToVessel(rec.FileId, rec.VesselId, rec.FileVersion);
+
+                                        objQms.SyncQmsLedgerRecordToVessel(rec.VesselAssignId,
+                                            rec.FileId, rec.VesselId, rec.FileVersion, rec.FilePath, newAssigment, true);
+
+                                        break;
+                                    case QMSEnums.QmsFileSyncStatusEnum.ConfirmationPending:
+                                        if (objQms.CheckDataLogRecordsProcessed(rec.FileId, rec.FileName, rec.VesselId))
+                                        {
+                                            objQms.updateQmsLedger(rec.VesselAssignId, QMSEnums.QmsFileSyncStatusEnum.SentToVessel, rec.FileVersion);
+                                            lock (syncVerificationRequestBatch)
+                                            {
+                                                syncVerificationRequestBatch.Add(Tuple.Create(rec, false));
+                                            }
+                                        }
+                                        break;
+                                    case QMSEnums.QmsFileSyncStatusEnum.SentToVessel:
+                                        lock (syncVerificationRequestBatch)
+                                        {
+                                            syncVerificationRequestBatch.Add(Tuple.Create(rec, true));
+                                        }
+                                        break;
+                                    case QMSEnums.QmsFileSyncStatusEnum.Failed:
+                                    case QMSEnums.QmsFileSyncStatusEnum.Retry:
+                                        objQms.SyncQmsLedgerRecordToVessel(rec.VesselAssignId,
+                                            rec.FileId, rec.VesselId, rec.FileVersion, rec.FilePath, true, false);
+
+                                        lock (syncVerificationRequestBatch)
+                                        {
+                                            syncVerificationRequestBatch.Add(Tuple.Create(rec, false));
+                                        }
+                                        break;
+                                    case QMSEnums.QmsFileSyncStatusEnum.ConfirmedOnVessel:
+                                        break;
+                                    default:
+                                        break;
+                                }
+                            }
+                            else if (rec.Status != QMSEnums.QmsFileSyncStatusEnum.Failed)
+                            {
+                                objQms.updateQmsLedger(rec.VesselAssignId, QMSEnums.QmsFileSyncStatusEnum.Failed, rec.FileVersion);
+                            }
+                        });
+                        UDFLib.LogDebug("LedgerRecordsSyncProcess", "Sending verification requests", _logLevel);
+                        objQms.SendVerificatioRequestToVessel(syncVerificationRequestBatch,
+                            entry.Key, config.SyncToVesselMaxfilesPerVerificationRequest);
+                    });
+
+                    UDFLib.LogDebug("LedgerRecordsSyncProcess", "Updating completed assignment requests", _logLevel);
+                    // mark all requests that all there records in ledger has been synced or failed and reach to max retried as completed
+                    objQms.UpdateAssignmentRequestStatusForCompletedRequests();
+
+                    if (records.Count < config.ProcessingBatchSize)
+                    {
+                        break;
+                    }
+                    else
+                    {
+                        // A simple protection against CPU overutilization.
+                        Thread.Sleep(250);
+                    }
+                }
+                catch(Exception ex)
+                {
+                    UDFLib.LogError(ex, _logLevel);
+                    Thread.Sleep(250);
+                }
+            }
+        }
+
+
+
+On 2/10/2025 1:09:00 AM, following error occured in the application:
+Message: Getting records from ledger
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: latestVesselAssignmentId is: 60100
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: Got 500 ledger records
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: QMS config values - SyncToVesselMaxRetries: 5, VerificationRequestMaxRetries: 5
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: Processing vessel: 709, number of assignments: 105
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: One or more errors occurred.
+Source: mscorlib
+Stack Trace:    at System.Threading.Tasks.Task.ThrowIfExceptional(Boolean includeTaskCanceledExceptions)
+   at System.Threading.Tasks.Task.Wait(Int32 millisecondsTimeout, CancellationToken cancellationToken)
+   at System.Threading.Tasks.Parallel.PartitionerForEachWorker[TSource,TLocal](Partitioner`1 source, ParallelOptions parallelOptions, Action`1 simpleBody, Action`2 bodyWithState, Action`3 bodyWithStateAndIndex, Func`4 bodyWithStateAndLocal, Func`5 bodyWithEverything, Func`1 localInit, Action`1 localFinally)
+   at System.Threading.Tasks.Parallel.ForEachWorker[TSource,TLocal](IEnumerable`1 source, ParallelOptions parallelOptions, Action`1 body, Action`2 bodyWithState, Action`3 bodyWithStateAndIndex, Func`4 bodyWithStateAndLocal, Func`5 bodyWithEverything, Func`1 localInit, Action`1 localFinally)
+   at System.Threading.Tasks.Parallel.ForEach[TSource](IEnumerable`1 source, ParallelOptions parallelOptions, Action`1 body)
+   at SMS.Business.QMS.QmsAssignAndSyncService.LedgerRecordsSyncProcess()
+HelpLink: 
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: Getting records from ledger
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: latestVesselAssignmentId is: 67920
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: Got 500 ledger records
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: QMS config values - SyncToVesselMaxRetries: 5, VerificationRequestMaxRetries: 5
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: Processing vessel: 709, number of assignments: 72
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: One or more errors occurred.
+Source: mscorlib
+Stack Trace:    at System.Threading.Tasks.Task.ThrowIfExceptional(Boolean includeTaskCanceledExceptions)
+   at System.Threading.Tasks.Task.Wait(Int32 millisecondsTimeout, CancellationToken cancellationToken)
+   at System.Threading.Tasks.Parallel.PartitionerForEachWorker[TSource,TLocal](Partitioner`1 source, ParallelOptions parallelOptions, Action`1 simpleBody, Action`2 bodyWithState, Action`3 bodyWithStateAndIndex, Func`4 bodyWithStateAndLocal, Func`5 bodyWithEverything, Func`1 localInit, Action`1 localFinally)
+   at System.Threading.Tasks.Parallel.ForEachWorker[TSource,TLocal](IEnumerable`1 source, ParallelOptions parallelOptions, Action`1 body, Action`2 bodyWithState, Action`3 bodyWithStateAndIndex, Func`4 bodyWithStateAndLocal, Func`5 bodyWithEverything, Func`1 localInit, Action`1 localFinally)
+   at System.Threading.Tasks.Parallel.ForEach[TSource](IEnumerable`1 source, ParallelOptions parallelOptions, Action`1 body)
+   at SMS.Business.QMS.QmsAssignAndSyncService.LedgerRecordsSyncProcess()
+HelpLink: 
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: Getting records from ledger
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: latestVesselAssignmentId is: 119558
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: Got 0 ledger records
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: QMS config values - SyncToVesselMaxRetries: 5, VerificationRequestMaxRetries: 5
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:09:01 AM, following error occured in the application:
+Message: Updating completed assignment requests
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 10/02/2025 01:31:44, following error occured in the application:
+Message: There is no row at position 0.
+Source: System.Data
+Stack Trace:    at System.Data.RBTree`1.GetNodeByIndex(Int32 userIndex)
+   at Crew_CrewDetails_Prejoining.Page_Load(Object sender, EventArgs e)
+HelpLink: 
+-------------------------------------------------------------------------------
+On 10/02/2025 01:31:45, following error occured in the application:
+Message: inside try - IsJ3PortageEnabled
+Source: Crew_CrewDetails_Voyages.ddlVesselList_SelectedIndexChanged()
+-------------------------------------------------------------------------------
+On 10/02/2025 01:31:45, following error occured in the application:
+Message: inside try - IsJ3PortageEnabled
+Source: Crew_CrewDetails_Voyages.ddlVesselList_SelectedIndexChanged()
+-------------------------------------------------------------------------------
+On 10/02/2025 01:31:45, following error occured in the application:
+Message: inside try - IsJ3PortageEnabled
+Source: Crew_CrewDetails_Voyages.ddlVesselList_SelectedIndexChanged()
+-------------------------------------------------------------------------------
+On 10/02/2025 01:31:45, following error occured in the application:
+Message: inside try - IsJ3PortageEnabled
+Source: Crew_CrewDetails_Voyages.ddlVesselList_SelectedIndexChanged()
+-------------------------------------------------------------------------------
+On 10/02/2025 01:31:45, following error occured in the application:
+Message: inside try - IsJ3PortageEnabled
+Source: Crew_CrewDetails_Voyages.ddlVesselList_SelectedIndexChanged()
+-------------------------------------------------------------------------------
+On 10/02/2025 01:31:45, following error occured in the application:
+Message: inside try - IsJ3PortageEnabled
+Source: Crew_CrewDetails_Voyages.ddlVesselList_SelectedIndexChanged()
+-------------------------------------------------------------------------------
+On 2/10/2025 1:38:51 AM, following error occured in the application:
+Message: QMS Background Assignments, before lock
+Source: ExecuteRecurringProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:38:51 AM, following error occured in the application:
+Message: QMS Background Assignments, inside lock
+Source: ExecuteRecurringProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:38:51 AM, following error occured in the application:
+Message: Getting pending assignment requests
+Source: SaveFolderVesselAssignments
+-------------------------------------------------------------------------------
+On 2/10/2025 1:38:51 AM, following error occured in the application:
+Message: Got 0 assignment requests
+Source: SaveFolderVesselAssignments
+-------------------------------------------------------------------------------
+On 2/10/2025 1:39:01 AM, following error occured in the application:
+Message: QMS Sync Monitoring, before lock
+Source: ExecuteRecurringProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:39:01 AM, following error occured in the application:
+Message: QMS Sync Monitoring, inside lock
+Source: ExecuteRecurringProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:39:01 AM, following error occured in the application:
+Message: Getting records from ledger
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:39:02 AM, following error occured in the application:
+Message: latestVesselAssignmentId is: -1
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:39:02 AM, following error occured in the application:
+Message: Got 500 ledger records
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:39:02 AM, following error occured in the application:
+Message: QMS config values - SyncToVesselMaxRetries: 5, VerificationRequestMaxRetries: 5
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:39:02 AM, following error occured in the application:
+Message: Processing vessel: 730, number of assignments: 19
+Source: LedgerRecordsSyncProcess
+-------------------------------------------------------------------------------
+On 2/10/2025 1:39:02 AM, following error occured in the application:
+Message: One or more errors occurred.
+Source: mscorlib
+Stack Trace:    at System.Threading.Tasks.Task.ThrowIfExceptional(Boolean includeTaskCanceledExceptions)
+   at System.Threading.Tasks.Task.Wait(Int32 millisecondsTimeout, CancellationToken cancellationToken)
+   at System.Threading.Tasks.Parallel.PartitionerForEachWorker[TSource,TLocal](Partitioner`1 source, ParallelOptions parallelOptions, Action`1 simpleBody, Action`2 bodyWithState, Action`3 bodyWithStateAndIndex, Func`4 bodyWithStateAndLocal, Func`5 bodyWithEverything, Func`1 localInit, Action`1 localFinally)
+   at System.Threading.Tasks.Parallel.ForEachWorker[TSource,TLocal](IEnumerable`1 source, ParallelOptions parallelOptions, Action`1 body, Action`2 bodyWithState, Action`3 bodyWithStateAndIndex, Func`4 bodyWithStateAndLocal, Func`5 bodyWithEverything, Func`1 localInit, Action`1 localFinally)
+   at System.Threading.Tasks.Parallel.ForEach[TSource](IEnumerable`1 source, ParallelOptions parallelOptions, Action`1 body)
+   at SMS.Business.QMS.QmsAssignAndSyncService.LedgerRecordsSyncProcess()
+HelpLink: 
+-------------------------------------------------------------------------------
+On 2/10/2025 1:39:02 AM, following error occured in the application:
+Message: Getting records from ledger
+Source: LedgerRecordsSyncProcess
