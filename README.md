@@ -1,2 +1,19 @@
-I have an scenario in which childe files have wrong filepath while it's parent file which folder and nodetype is 1 have correct filepath I want to check all files have incorrect filepath in table qmsdtlsfile_log and nodetype is 0 which is for file extra those file but make sure 
-e.g folder path is DOCUMENTS/(00_Tariq while filepath is DOCUMENTS/(00_Tariq/QMS_4ec95f41-4043-4bc2-a20a-36d5e8f3018b.txt and firstly remove file encrypted name and then compare if folder and file path is not same give that file
+WITH ParentFolders AS (
+    SELECT id, filepath AS parent_path
+    FROM qmsdtlsfile_log
+    WHERE nodetype = 1
+),
+ChildFiles AS (
+    SELECT f.id, f.filepath, p.parent_path
+    FROM qmsdtlsfile_log f
+    JOIN ParentFolders p ON f.parent_id = p.id
+    WHERE f.nodetype = 0
+),
+CleanedPaths AS (
+    SELECT id, filepath, parent_path,
+           SUBSTRING(filepath, 1, LEN(filepath) - CHARINDEX('/', REVERSE(filepath))) AS cleaned_filepath
+    FROM ChildFiles
+)
+SELECT id, filepath, parent_path
+FROM CleanedPaths
+WHERE cleaned_filepath <> parent_path;
