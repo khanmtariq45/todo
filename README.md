@@ -1,58 +1,52 @@
--- Drop the temp table if it exists
-DROP TABLE IF EXISTS #folder_ids;
+DECLARE @SQL_Script NVARCHAR(MAX);
 
--- Create a temporary table to hold folder IDs
+SET @SQL_Script = N'
+DECLARE @FolderId NVARCHAR(20);
+DECLARE @VesselID INT = 4760;
+
+EXEC [SYNC_SP_DataSynchronizer_DataLog] '''', '''', '''', @VesselID, ''EXEC [inf].[utils_inf_backup_table] ''''QMSdtlsFile_Log'''''';
+
 CREATE TABLE #folder_ids (folder_id INT);
 
--- Populate the temp table using a recursive CTE
 WITH folder_hierarchy AS (
-    -- Anchor member: Start with root folders (parentid = 0)
-    SELECT 
-        id, 
-        parentid
-    FROM qmsdtlsfile_log 
-    WHERE 
-        parentid = 0 
-        AND nodetype = 1 -- Only folders
-    
+    SELECT id, parentid
+    FROM qmsdtlsfile_log with (nolock)
+    WHERE parentid = 0	AND active_status = 1 AND nodetype = 1 
     UNION ALL
-    
-    -- Recursive member: Traverse child folders
-    SELECT 
-        f.id, 
-        f.parentid
-    FROM qmsdtlsfile_log f
-    INNER JOIN folder_hierarchy fh 
-        ON f.parentid = fh.id 
-    WHERE 
-        f.nodetype = 1 -- Only folders
+    SELECT f.id, f.parentid
+    FROM qmsdtlsfile_log f with (nolock)
+    INNER JOIN folder_hierarchy fh ON f.parentid = fh.id 
+    WHERE f.nodetype = 1 AND f.active_status = 1
 )
+
 INSERT INTO #folder_ids (folder_id)
 SELECT id FROM folder_hierarchy;
 
--- Declare variables and cursor
-DECLARE @current_folder_id INT;
-
-DECLARE folder_cursor CURSOR FOR 
+DECLARE curDoc CURSOR FOR
 SELECT folder_id FROM #folder_ids;
 
--- Open the cursor and fetch the first row
-OPEN folder_cursor;
-FETCH NEXT FROM folder_cursor INTO @current_folder_id;
+OPEN curDoc;
+FETCH NEXT FROM curDoc INTO @FolderId;
 
--- Loop through all rows and print folder IDs
 WHILE @@FETCH_STATUS = 0
 BEGIN
-    -- Print the current folder ID
-    PRINT 'Folder ID: ' + CAST(@current_folder_id AS VARCHAR(10));
 
-    -- Fetch the next row
-    FETCH NEXT FROM folder_cursor INTO @current_folder_id;
-END;
+    DECLARE @PkCondition VARCHAR(100) = ''ID='''''' + CAST(@FolderId AS VARCHAR) + '''''''';
+    DECLARE @TableName VARCHAR(100) = ''QMSdtlsFile_Log'';
+    EXEC SYNC_SP_DataSynch_MultiPK_DataLog @TableName, @PkCondition, @VesselID;
 
--- Cleanup
-CLOSE folder_cursor;
-DEALLOCATE folder_cursor;
+    FETCH NEXT FROM curDoc INTO @FolderId;
+END
 
--- Drop the temporary table
+CLOSE curDoc;
+DEALLOCATE curDoc;
+
 DROP TABLE #folder_ids;
+';
+
+EXEC [inf].[register_script_for_execution] 
+    'QMS', 
+    'QMS_Document', 
+    'Task 1 Bug 979218: CST - Multiple Vessels - In QMS files were not sync to Vessels.', 
+    'O', 
+    @SQL_Script;
