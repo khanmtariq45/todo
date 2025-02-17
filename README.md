@@ -1,52 +1,62 @@
-DECLARE @SQL_Script NVARCHAR(MAX);
+ protected void UploadButton_Click(object sender, EventArgs e)
+    {
+        try
+        {
+            bool IE = Request.UserAgent.IndexOf("MSIE") > -1;
+            HttpFileCollection selectedFiles = Request.Files;
+            UploadStatusLabel.Text = "";
+            if (selectedFiles.Count > 0)
+            {
+                var ext = Path.GetExtension(selectedFiles[0].FileName).ToLowerInvariant();
+                if (ext != ".mht" && ext != ".mhtml")
+                {
+                    UploadStatusLabel.Text = "Only .mht and .mhtml files are allowed";
+                    return;
+                }
+                BLL_QMS_Document objQMS = new BLL_QMS_Document();
 
-SET @SQL_Script = N'
-DECLARE @FolderId NVARCHAR(20);
-DECLARE @VesselID INT = 4760;
+                string fileName = Path.GetFileNameWithoutExtension(selectedFiles[0].FileName) + ".html";
+                string encodedFileName = Uri.EscapeDataString(fileName);
+                var parser = new MHTMLParser(selectedFiles[0]);
+                var html = parser.getHTMLText();
 
-EXEC [SYNC_SP_DataSynchronizer_DataLog] '''', '''', '''', @VesselID, ''EXEC [inf].[utils_inf_backup_table] ''''QMSdtlsFile_Log'''''';
+                //First Regex: Handle "file://" URLs with "/#/" pattern
+                string pattern = @"href=""file://[^""]*?(/#/.*?)""";
+                string replacement = @"href=""$1""";
+                html = System.Text.RegularExpressions.Regex.Replace(html, pattern, replacement);
 
-CREATE TABLE #folder_ids (folder_id INT);
+                // Second Regex: Fix "#\qms?" and "#qms?" to "/#/qms?"
+                string pattern2 = @"href=""([^""]*?)#\\?qms\?(.*?)""";
+                string replacement2 = @"href=""$1/#/qms?$2""";
+                html = System.Text.RegularExpressions.Regex.Replace(html, pattern2, replacement2);
 
-WITH folder_hierarchy AS (
-    SELECT id, parentid
-    FROM qmsdtlsfile_log with (nolock)
-    WHERE parentid = 0	AND active_status = 1 AND nodetype = 1 
-    UNION ALL
-    SELECT f.id, f.parentid
-    FROM qmsdtlsfile_log f with (nolock)
-    INNER JOIN folder_hierarchy fh ON f.parentid = fh.id 
-    WHERE f.nodetype = 1 AND f.active_status = 1
-)
-
-INSERT INTO #folder_ids (folder_id)
-SELECT id FROM folder_hierarchy;
-
-DECLARE curDoc CURSOR FOR
-SELECT folder_id FROM #folder_ids;
-
-OPEN curDoc;
-FETCH NEXT FROM curDoc INTO @FolderId;
-
-WHILE @@FETCH_STATUS = 0
-BEGIN
-
-    DECLARE @PkCondition VARCHAR(100) = ''ID='''''' + CAST(@FolderId AS VARCHAR) + '''''''';
-    DECLARE @TableName VARCHAR(100) = ''QMSdtlsFile_Log'';
-    EXEC SYNC_SP_DataSynch_MultiPK_DataLog @TableName, @PkCondition, @VesselID;
-
-    FETCH NEXT FROM curDoc INTO @FolderId;
-END
-
-CLOSE curDoc;
-DEALLOCATE curDoc;
-
-DROP TABLE #folder_ids;
-';
-
-EXEC [inf].[register_script_for_execution] 
-    'QMS', 
-    'QMS_Document', 
-    'Task 1 Bug 979218: CST - Multiple Vessels - In QMS files were not sync to Vessels.', 
-    'O', 
-    @SQL_Script;
+                // Decode obfuscated email addresses
+                string processedHtml = DecodeObfuscatedEmails(html);
+                // Replace specific characters
+                processedHtml = processedHtml.Replace("’", "'").Replace("‘", "'").Replace("“", "\"").Replace("”", "\""); // Non-breaking space;
+                // Convert the processed HTML to bytes 
+                byte[] htmlBytes = Encoding.UTF8.GetBytes(processedHtml);
+                HttpContext.Current.Response.Cache.SetCacheability(HttpCacheability.NoCache);
+                HttpContext.Current.Response.Cache.SetNoStore();
+                HttpContext.Current.Response.Cache.SetExpires(DateTime.MinValue);
+                HttpContext.Current.Response.Expires = -1;
+                HttpContext.Current.Response.CacheControl = "no-cache";
+                HttpContext.Current.Response.ContentType = "text/html";
+                HttpContext.Current.Response.AddHeader("Content-Disposition", "attachment; filename=" + encodedFileName);
+                HttpContext.Current.Response.OutputStream.Write(htmlBytes, 0, htmlBytes.Length);
+                HttpContext.Current.Response.Flush();
+                HttpContext.Current.Response.Close();
+                HttpContext.Current.Response.End();
+            }
+            else
+            {
+                // Notify the user that a file was not uploaded.
+                UploadStatusLabel.Text = "You did not specify a file to upload.";
+            }
+        }
+        catch (Exception ex)
+        {
+            UDFLib.WriteExceptionLog(ex);
+            HttpContext.Current.Response.End();
+        }
+    }
