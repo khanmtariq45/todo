@@ -1,180 +1,147 @@
-using SMS.Business.QMS;
 using System;
-using System.Collections.Generic;
+using System.Data.SqlClient;
 using System.IO;
-using System.IO.Compression;
-using System.Linq;
-using System.Text;
-using System.Web;
-using System.Web.UI;
-using System.Web.UI.WebControls;
-using Telerik.Web.UI.Widgets;
+using System.Threading;
+using System.Windows.Forms;
+using SHDocVw;
 
-public partial class QMS_MhtmlConverter : System.Web.UI.Page
+namespace HtmlToMhtmlConverter
 {
-    protected void Page_Load(object sender, EventArgs e)
+    class Program
     {
-        if (!IsPostBack)
+        [STAThread]
+        static void Main(string[] args)
         {
-            if (GetSessionUserID() == 0)
+            if (args.Length < 2)
             {
-                Response.Redirect("~/default.aspx?msgid=1");
+                Console.WriteLine("Usage: HtmlToMhtmlConverter.exe <baseFolderPath> <connectionString>");
+                return;
+            }
+
+            string baseFolderPath = args[0];
+            string connectionString = args[1];
+
+            if (!Directory.Exists(baseFolderPath))
+            {
+                Console.WriteLine("The provided base folder path does not exist.");
+                return;
+            }
+
+            try
+            {
+                ProcessFilesFromDatabase(baseFolderPath, connectionString);
+                Console.WriteLine("Conversion completed!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
             }
         }
-    }
-    private int GetSessionUserID()
-    {
-        if (Session["USERID"] != null)
-            return int.Parse(Session["USERID"].ToString());
-        else
-            return 0;
-    }
 
-    protected void UploadButton_Click(object sender, EventArgs e)
-    {
-        try
+        static void ProcessFilesFromDatabase(string baseFolderPath, string connectionString)
         {
-            bool IE = Request.UserAgent.IndexOf("MSIE") > -1;
-            HttpFileCollection selectedFiles = Request.Files;
-            UploadStatusLabel.Text = "";
-            if (selectedFiles.Count > 0)
+            using (var connection = new SqlConnection(connectionString))
             {
-                var ext = Path.GetExtension(selectedFiles[0].FileName).ToLowerInvariant();
-                if (ext != ".mht" && ext != ".mhtml")
+                connection.Open();
+                string query = "SELECT filepath FROM qmsdtlsfile_log WHERE active_status = 1";
+                using (var command = new SqlCommand(query, connection))
+                using (var reader = command.ExecuteReader())
                 {
-                    UploadStatusLabel.Text = "Only .mht and .mhtml files are allowed";
-                    return;
-                }
-                BLL_QMS_Document objQMS = new BLL_QMS_Document();
-
-                string fileName = Path.GetFileNameWithoutExtension(selectedFiles[0].FileName) + ".html";
-                string encodedFileName = Uri.EscapeDataString(fileName);
-                var parser = new MHTMLParser(selectedFiles[0]);
-                var html = parser.getHTMLText();
-
-                //First Regex: Handle "file://" URLs with "/#/" pattern
-                string pattern = @"href=""file://[^""]*?(/#/.*?)""";
-                string replacement = @"href=""$1""";
-                html = System.Text.RegularExpressions.Regex.Replace(html, pattern, replacement);
-
-                // Second Regex: Fix "#\qms?" and "#qms?" to "/#/qms?"
-                string pattern2 = @"href=""([^""]*?)#\\?qms\?(.*?)""";
-                string replacement2 = @"href=""$1/#/qms?$2""";
-                html = System.Text.RegularExpressions.Regex.Replace(html, pattern2, replacement2);
-
-                // Decode obfuscated email addresses
-                string processedHtml = DecodeObfuscatedEmails(html);
-                // Replace specific characters
-                processedHtml = processedHtml.Replace("’", "'").Replace("‘", "'").Replace("“", "\"").Replace("”", "\""); // Non-breaking space;
-                // Convert the processed HTML to bytes 
-                byte[] htmlBytes = Encoding.UTF8.GetBytes(processedHtml);
-                HttpContext.Current.Response.Cache.SetCacheability(HttpCacheability.NoCache);
-                HttpContext.Current.Response.Cache.SetNoStore();
-                HttpContext.Current.Response.Cache.SetExpires(DateTime.MinValue);
-                HttpContext.Current.Response.Expires = -1;
-                HttpContext.Current.Response.CacheControl = "no-cache";
-                HttpContext.Current.Response.ContentType = "text/html";
-                HttpContext.Current.Response.AddHeader("Content-Disposition", "attachment; filename=" + encodedFileName);
-                HttpContext.Current.Response.OutputStream.Write(htmlBytes, 0, htmlBytes.Length);
-                HttpContext.Current.Response.Flush();
-                HttpContext.Current.Response.Close();
-                HttpContext.Current.Response.End();
-            }
-            else
-            {
-                // Notify the user that a file was not uploaded.
-                UploadStatusLabel.Text = "You did not specify a file to upload.";
-            }
-        }
-        catch (Exception ex)
-        {
-            UDFLib.WriteExceptionLog(ex);
-            HttpContext.Current.Response.End();
-        }
-    }
-
-    public string DecodeObfuscatedEmails(string htmlContent)
-    {
-        try
-        {
-            var oregex = new System.Text.RegularExpressions.Regex(@"<(?<tag>[a-zA-Z]+)[^>]*data-cfemail=([\""']?)(?<cfemail>[a-fA-F0-9]+)\1[^>]*>(?<innerContent>.*?)</\k<tag>>", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline);
-            var omatchings = oregex.Matches(htmlContent);
-            UDFLib.WriteExceptionInfLog(new Exception("Started Processing HTML Content:" + htmlContent), QMSEnums.QmsModuleCode.QMS.ToString());
-            if (omatchings.Count > 0)
-            {
-                UDFLib.WriteExceptionInfLog(new Exception("Found " + omatchings.Count.ToString() + " Regex Matching Instances."), QMSEnums.QmsModuleCode.QMS.ToString());
-                foreach (System.Text.RegularExpressions.Match match in omatchings)
-                {
-                    string tag = match.Groups["tag"].Value;
-                    string cfemail = match.Groups["cfemail"].Value;
-                    string innerContent = match.Groups["innerContent"].Value;
-                    if (!string.IsNullOrEmpty(cfemail))
+                    while (reader.Read())
                     {
-                        string decodedEmail = DecodeEmail(cfemail);
-                        string updatedTag;
-                        if (tag.Equals("a", StringComparison.OrdinalIgnoreCase) || tag.Equals("span", StringComparison.OrdinalIgnoreCase))
+                        string filePath = reader["filepath"].ToString();
+                        string fullFilePath = Path.Combine(baseFolderPath, filePath);
+
+                        if (File.Exists(fullFilePath) && (fullFilePath.EndsWith(".html") || fullFilePath.EndsWith(".htm")))
                         {
-                            updatedTag = @"<!--email_off-->" + decodedEmail + "<!--/email_off-->";
+                            string outputFilePath = GetOutputFilePath(baseFolderPath, filePath);
+                            ConvertHtmlToMhtml(fullFilePath, outputFilePath);
                         }
                         else
                         {
-                            continue;
+                            Console.WriteLine($"File not found or not an HTML file: {fullFilePath}");
                         }
-                        UDFLib.WriteExceptionInfLog(new Exception("Replacing: " + match.Value + " With " + updatedTag), QMSEnums.QmsModuleCode.QMS.ToString());
-                        htmlContent = htmlContent.Replace(match.Value, updatedTag);
                     }
-                    else
+                }
+            }
+        }
+
+        static string GetOutputFilePath(string baseFolderPath, string filePath)
+        {
+            string outputBaseFolder = Path.Combine(baseFolderPath, "ConvertedFiles");
+            string fullOutputPath = Path.Combine(outputBaseFolder, filePath);
+            string outputFilePath = Path.ChangeExtension(fullOutputPath, fullOutputPath.EndsWith(".html") ? ".mhtml" : ".mht");
+
+            // Ensure the output directory exists
+            Directory.CreateDirectory(Path.GetDirectoryName(outputFilePath));
+
+            return outputFilePath;
+        }
+
+        static void ConvertHtmlToMhtml(string inputPath, string outputPath)
+        {
+            Console.WriteLine($"Converting: {inputPath}");
+
+            var autoResetEvent = new AutoResetEvent(false);
+            Exception threadException = null;
+
+            Thread staThread = new Thread(() =>
+            {
+                try
+                {
+                    using (var form = new Form())
+                    using (var browser = new WebBrowser())
                     {
-                        UDFLib.WriteExceptionLog(new Exception("No obfuscated email found in the match. cfemail: " + "(" + cfemail + ") - tag: " + tag + " - innerContent: " + innerContent));
+                        form.ShowInTaskbar = false;
+                        form.WindowState = FormWindowState.Minimized;
+                        browser.Silent = true;
+                        browser.DocumentCompleted += (sender, e) =>
+                        {
+                            if (browser.ReadyState == WebBrowserReadyState.Complete)
+                            {
+                                try
+                                {
+                                    object fileName = outputPath;
+                                    object fileType = 9; // MHTML format
+                                    browser.ExecWB(OLECMDID.OLECMDID_SAVEAS,
+                                                  OLECMDEXECOPT.OLECMDEXECOPT_DONTPROMPTUSER,
+                                                  ref fileName,
+                                                  ref fileType);
+                                }
+                                finally
+                                {
+                                    autoResetEvent.Set();
+                                    form.Close();
+                                }
+                            }
+                        };
+
+                        browser.Navigate(new Uri(inputPath));
+                        form.Controls.Add(browser);
+                        Application.Run(form);
                     }
                 }
-                UDFLib.WriteExceptionInfLog(new Exception("Content Length: " + Encoding.UTF8.GetByteCount(htmlContent) + " Completed Processing HTML Content:" + htmlContent), QMSEnums.QmsModuleCode.QMS.ToString());
-            }
-            else
-            {
-                UDFLib.WriteExceptionInfLog(new Exception("No match found using REGEX:" + oregex), QMSEnums.QmsModuleCode.QMS.ToString());
-            }
-            return htmlContent;
-        }
-        catch (Exception ex)
-        {
-            UDFLib.WriteExceptionLog(ex);
-            return htmlContent;
-        }
-    }
-
-    public string DecodeEmail(string obfuscatedEmail)
-    {
-        // Ensure the obfuscatedEmail has at least 2 characters for the key
-        if (obfuscatedEmail.Length < 2)
-        {
-            throw new ArgumentException("Invalid obfuscated email format.");
-        }
-
-        int key = Convert.ToInt32(obfuscatedEmail.Substring(0, 2), 16);
-        StringBuilder email = new StringBuilder();
-
-        try
-        {
-            for (int i = 2; i < obfuscatedEmail.Length; i += 2)
-            {
-                // Ensure there are enough characters left for a valid substring
-                if (i + 2 <= obfuscatedEmail.Length)
+                catch (Exception ex)
                 {
-                    int charCode = Convert.ToInt32(obfuscatedEmail.Substring(i, 2), 16) ^ key;
-                    email.Append((char)charCode);
+                    threadException = ex;
+                    autoResetEvent.Set();
                 }
-                else
-                {
-                    UDFLib.WriteExceptionLog(new ArgumentException("Invalid obfuscated email format."));
-                }
+            });
+
+            staThread.SetApartmentState(ApartmentState.STA);
+            staThread.Start();
+
+            if (!autoResetEvent.WaitOne(TimeSpan.FromSeconds(30)))
+            {
+                Console.WriteLine($"Timeout converting {inputPath}");
+            }
+
+            staThread.Join();
+
+            if (threadException != null)
+            {
+                Console.WriteLine($"Error converting {inputPath}: {threadException.Message}");
             }
         }
-        catch (Exception ex)
-        {
-            UDFLib.WriteExceptionLog(ex);
-            return string.Empty; // Return an empty string or handle the error as needed
-        }
-        return email.ToString();
     }
 }
