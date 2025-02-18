@@ -173,14 +173,14 @@ class Program
     static void RemoveProblematicTags(HtmlDocument doc)
     {
         // Example: Remove <script> tags
-        var scriptNodes = doc.DocumentNode.SelectNodes("//script");
-        if (scriptNodes != null)
-        {
-            foreach (var node in scriptNodes)
-            {
-                node.Remove();
-            }
-        }
+        //var scriptNodes = doc.DocumentNode.SelectNodes("//script");
+        //if (scriptNodes != null)
+        //{
+        //    foreach (var node in scriptNodes)
+        //    {
+        //        node.Remove();
+        //    }
+        //}
     }
 
     public static string DecodeObfuscatedEmails(string htmlContent)
