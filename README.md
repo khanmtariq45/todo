@@ -6,20 +6,26 @@ using System.Text;
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using MimeKit;
-using System.Data.SqlClient;
+using System.Diagnostics;
 
 class Program
 {
     static void Main(string[] args)
     {
-        Console.WriteLine("Is the console app being run locally or on the server? (local/server): ");
-        string environment = Console.ReadLine().Trim().ToLower();
+        Console.WriteLine("Select conversion type:");
+        Console.WriteLine("1. Convert .html / .htm to .mhtml or .mhtm");
+        Console.WriteLine("2. Convert .docx to .mhtml");
+        Console.Write("Enter your choice (1/2): ");
+        
+        string choice = Console.ReadLine().Trim();
 
-        string connectionString = environment == "local"
-            ? "data source=dev.c5owyuw64shd.ap-south-1.rds.amazonaws.com,1982;database=JIBE_Main;uid=j2;pwd=123456;max pool size=200;"
-            : GetConnectionStringFromUser();
+        if (choice != "1" && choice != "2")
+        {
+            Console.WriteLine("Invalid choice. Exiting...");
+            return;
+        }
 
-        Console.WriteLine("Please enter the folder path: ");
+        Console.WriteLine("Please enter the folder path containing the files: ");
         string rootDirectory = Console.ReadLine();
 
         if (!Directory.Exists(rootDirectory))
@@ -27,8 +33,6 @@ class Program
             Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine("Invalid directory path.");
             Console.ResetColor();
-            Console.WriteLine("Press any key to exit...");
-            Console.ReadKey();
             return;
         }
 
@@ -46,10 +50,17 @@ class Program
 
         HashSet<string> processedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Get all unique .htm and .html files
-        var files = Directory.EnumerateFiles(rootDirectory, "*.htm", SearchOption.AllDirectories)
-                              .Union(Directory.EnumerateFiles(rootDirectory, "*.html", SearchOption.AllDirectories))
-                              .Distinct(StringComparer.OrdinalIgnoreCase);
+        IEnumerable<string> files;
+        if (choice == "1")
+        {
+            files = Directory.EnumerateFiles(rootDirectory, "*.htm", SearchOption.AllDirectories)
+                      .Union(Directory.EnumerateFiles(rootDirectory, "*.html", SearchOption.AllDirectories))
+                      .Distinct(StringComparer.OrdinalIgnoreCase);
+        }
+        else
+        {
+            files = Directory.EnumerateFiles(rootDirectory, "*.docx", SearchOption.AllDirectories).Distinct(StringComparer.OrdinalIgnoreCase);
+        }
 
         foreach (var originalFilePath in files)
         {
@@ -60,7 +71,7 @@ class Program
 
             try
             {
-                ProcessFile(originalFilePath, connectionString, logBuilder, rootDirectory, destinationRootDirectory, notConvertedLogFilePath);
+                ProcessFile(originalFilePath, logBuilder, rootDirectory, destinationRootDirectory, notConvertedLogFilePath, choice);
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.WriteLine($"Successfully processed: {originalFilePath}");
             }
@@ -80,17 +91,9 @@ class Program
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("Processing completed. Logs saved to " + logFilePath);
         Console.ResetColor();
-        Console.WriteLine("Press any key to exit...");
-        Console.ReadKey();
     }
 
-    static string GetConnectionStringFromUser()
-    {
-        Console.WriteLine("Please enter the connection string for the server: ");
-        return Console.ReadLine();
-    }
-
-    static void ProcessFile(string originalFilePath, string connectionString, StringBuilder logBuilder, string rootDirectory, string destinationRootDirectory, string notConvertedLogFilePath)
+    static void ProcessFile(string originalFilePath, StringBuilder logBuilder, string rootDirectory, string destinationRootDirectory, string notConvertedLogFilePath, string choice)
     {
         string fileName = Path.GetFileName(originalFilePath);
         string relativePath = GetRelativePath(rootDirectory, originalFilePath);
@@ -101,37 +104,76 @@ class Program
             Directory.CreateDirectory(destinationDirectory);
         }
 
-        string updatedFileName = fileName;
-        if (string.IsNullOrEmpty(updatedFileName))
+        if (choice == "2" && originalFilePath.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
         {
-            File.AppendAllText(notConvertedLogFilePath, originalFilePath + Environment.NewLine);
+            string outputFilePath = Path.Combine(destinationDirectory, Path.GetFileNameWithoutExtension(originalFilePath) + ".mhtml");
+            ConvertDocxToMhtml(originalFilePath, outputFilePath);
+            logBuilder.AppendLine($"Processed File: {originalFilePath}, Converted: Yes, Output File: {outputFilePath}");
             return;
         }
 
-        // Process HTML content in chunks to handle large files
-        string cleanedHtml = PreprocessHtml(originalFilePath);
+        if (choice == "1" && (originalFilePath.EndsWith(".htm", StringComparison.OrdinalIgnoreCase) || originalFilePath.EndsWith(".html", StringComparison.OrdinalIgnoreCase)))
+        {
+            string cleanedHtml = PreprocessHtml(originalFilePath);
+            cleanedHtml = DecodeObfuscatedEmails(cleanedHtml);
 
-        // Correct URLs
-        cleanedHtml = Regex.Replace(cleanedHtml, @"href=""file://[^""]*?(/#/.*?)""", @"href=""$1""");
-        cleanedHtml = Regex.Replace(cleanedHtml, @"href=""([^""]*?)#\\qms\?(.*?)""", @"href=""$1/#/qms?$2""");
+            string tempFolder = Path.Combine(destinationRootDirectory, "Temp");
+            Directory.CreateDirectory(tempFolder);
+            string tempHtmlFilePath = Path.Combine(tempFolder, "cleaned_temp.html");
+            File.WriteAllText(tempHtmlFilePath, cleanedHtml);
 
-        // Email Un-Protected
-        cleanedHtml = DecodeObfuscatedEmails(cleanedHtml);
+            string outputMhtmlPath = Path.Combine(destinationDirectory, Path.GetFileNameWithoutExtension(fileName) + ".mhtml");
+            ConvertHtmlToMhtml(tempHtmlFilePath, outputMhtmlPath);
 
-        // Write cleaned HTML to a temporary file
-        string tempFolder = Path.Combine(destinationRootDirectory, "Temp");
-        Directory.CreateDirectory(tempFolder);
-        string tempHtmlFilePath = Path.Combine(tempFolder, "cleaned_temp.html");
-        File.WriteAllText(tempHtmlFilePath, cleanedHtml);
-
-        // Convert to MHTML
-        string outputFilePath = Path.Combine(destinationDirectory, Path.GetFileNameWithoutExtension(updatedFileName) + (Path.GetExtension(updatedFileName).Equals(".htm", StringComparison.OrdinalIgnoreCase) ? ".mhtm" : ".mhtml"));
-        ConvertToMhtml(tempHtmlFilePath, outputFilePath);
-
-        logBuilder.AppendLine($"Processed File: {originalFilePath}, Converted: Yes, Output File: {outputFilePath}");
+            logBuilder.AppendLine($"Processed File: {originalFilePath}, Converted: Yes, Output File: {outputMhtmlPath}");
+        }
     }
 
-    static void ConvertToMhtml(string htmlFilePath, string outputFilePath)
+    static void ConvertDocxToMhtml(string docxFilePath, string outputFilePath)
+    {
+        string libreOfficePath = @"C:\Program Files\LibreOffice\program\soffice.exe";
+
+        if (!File.Exists(libreOfficePath))
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("LibreOffice not found. Please install LibreOffice and try again.");
+            Console.ResetColor();
+            return;
+        }
+
+        string tempOutputDir = Path.GetDirectoryName(outputFilePath);
+        string tempMhtmlPath = Path.Combine(tempOutputDir, Path.GetFileNameWithoutExtension(docxFilePath) + ".mhtml");
+
+        ProcessStartInfo startInfo = new ProcessStartInfo
+        {
+            FileName = libreOfficePath,
+            Arguments = $"--headless --convert-to mhtml \"{docxFilePath}\" --outdir \"{tempOutputDir}\"",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using (Process process = new Process { StartInfo = startInfo })
+        {
+            process.Start();
+            process.WaitForExit();
+        }
+
+        if (File.Exists(tempMhtmlPath))
+        {
+            File.Move(tempMhtmlPath, outputFilePath, true);
+            Console.WriteLine($"Converted: {docxFilePath} -> {outputFilePath}");
+        }
+        else
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Failed to convert {docxFilePath} to MHTML.");
+            Console.ResetColor();
+        }
+    }
+
+    static void ConvertHtmlToMhtml(string htmlFilePath, string outputFilePath)
     {
         var message = new MimeMessage();
         var body = new TextPart("html")
@@ -155,119 +197,14 @@ class Program
     static string PreprocessHtml(string filePath)
     {
         var doc = new HtmlDocument();
-        using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read))
-        {
-            doc.Load(stream, Encoding.UTF8);
-        }
-
+        doc.Load(filePath, Encoding.UTF8);
         doc.OptionFixNestedTags = true;
-        RemoveProblematicTags(doc);
-
-        using (var writer = new StringWriter())
-        {
-            doc.Save(writer);
-            return writer.ToString();
-        }
-    }
-
-    static void RemoveProblematicTags(HtmlDocument doc)
-    {
-        // Example: Remove <script> tags
-        //var scriptNodes = doc.DocumentNode.SelectNodes("//script");
-        //if (scriptNodes != null)
-        //{
-        //    foreach (var node in scriptNodes)
-        //    {
-        //        node.Remove();
-        //    }
-        //}
+        return doc.DocumentNode.OuterHtml;
     }
 
     public static string DecodeObfuscatedEmails(string htmlContent)
     {
-        try
-        {
-            var regex = new Regex(@"<(?<tag>[a-zA-Z]+)[^>]*data-cfemail=([\""']?)(?<cfemail>[a-fA-F0-9]+)\1[^>]*>(?<innerContent>.*?)</\k<tag>>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
-            var matches = regex.Matches(htmlContent);
-            if (matches.Count > 0)
-            {
-                foreach (Match match in matches)
-                {
-                    string tag = match.Groups["tag"].Value;
-                    string cfemail = match.Groups["cfemail"].Value;
-                    string innerContent = match.Groups["innerContent"].Value;
-                    if (!string.IsNullOrEmpty(cfemail))
-                    {
-                        string decodedEmail = DecodeEmail(cfemail);
-                        string updatedTag;
-                        if (tag.Equals("a", StringComparison.OrdinalIgnoreCase) || tag.Equals("span", StringComparison.OrdinalIgnoreCase))
-                        {
-                            updatedTag = @"<!--email_off-->" + decodedEmail + "<!--/email_off-->";
-                        }
-                        else
-                        {
-                            continue;
-                        }
-                        htmlContent = htmlContent.Replace(match.Value, updatedTag);
-                    }
-                    else
-                    {
-                        Console.WriteLine("No obfuscated email found in the match. cfemail: " + "(" + cfemail + ") - tag: " + tag + " - innerContent: " + innerContent);
-                    }
-                }
-            }
-            return htmlContent;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine(ex);
-            return htmlContent;
-        }
-    }
-
-    public static string DecodeEmail(string obfuscatedEmail)
-    {
-        if (obfuscatedEmail.Length < 2)
-        {
-            throw new ArgumentException("Invalid obfuscated email format.");
-        }
-
-        int key = Convert.ToInt32(obfuscatedEmail.Substring(0, 2), 16);
-        StringBuilder email = new StringBuilder();
-
-        try
-        {
-            for (int i = 2; i < obfuscatedEmail.Length; i += 2)
-            {
-                if (i + 2 <= obfuscatedEmail.Length)
-                {
-                    int charCode = Convert.ToInt32(obfuscatedEmail.Substring(i, 2), 16) ^ key;
-                    email.Append((char)charCode);
-                }
-                else
-                {
-                    Console.WriteLine("Invalid obfuscated email format.");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine(ex);
-            return string.Empty;
-        }
-        return email.ToString();
-    }
-
-    static string GetFileNameFromDatabase(string fileName, string connectionString)
-    {
-        string query = "SELECT LogFileID FROM qmsdtlsfile_log WHERE FilePath LIKE @fileName";
-        using (var connection = new SqlConnection(connectionString))
-        {
-            var command = new SqlCommand(query, connection);
-            command.Parameters.AddWithValue("@fileName", "%" + fileName + "%");
-            connection.Open();
-            return command.ExecuteScalar()?.ToString();
-        }
+        return htmlContent;  // No obfuscation decoding needed for now
     }
 
     static string GetRelativePath(string basePath, string fullPath)
