@@ -3,8 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using HtmlAgilityPack;
-using Spire.Doc;
+using MimeKit;
 using System.Data.SqlClient;
 
 class Program
@@ -31,7 +32,7 @@ class Program
             return;
         }
 
-        Console.WriteLine("Please enter the destination folder path for Word files: ");
+        Console.WriteLine("Please enter the destination folder path for MHTML files: ");
         string destinationRootDirectory = Console.ReadLine();
 
         if (!Directory.Exists(destinationRootDirectory))
@@ -100,7 +101,6 @@ class Program
             Directory.CreateDirectory(destinationDirectory);
         }
 
-        //string updatedFileName = GetFileNameFromDatabase(fileName, connectionString);
         string updatedFileName = fileName;
         if (string.IsNullOrEmpty(updatedFileName))
         {
@@ -108,44 +108,62 @@ class Program
             return;
         }
 
+        // Process HTML content in chunks to handle large files
         string cleanedHtml = PreprocessHtml(originalFilePath);
-        //urls Correct
 
-        string pattern = @"href=""file://[^""]*?(/#/.*?)""";
-        string replacement = @"href=""$1""";
-        cleanedHtml = System.Text.RegularExpressions.Regex.Replace(cleanedHtml, pattern, replacement);
+        // Correct URLs
+        cleanedHtml = Regex.Replace(cleanedHtml, @"href=""file://[^""]*?(/#/.*?)""", @"href=""$1""");
+        cleanedHtml = Regex.Replace(cleanedHtml, @"href=""([^""]*?)#\\qms\?(.*?)""", @"href=""$1/#/qms?$2""");
 
-
-        string pattern2 = @"href=""([^""]*?)#\\qms\?(.*?)""";
-        string replacement2 = @"href=""$1/#/qms?$2""";
-        cleanedHtml = System.Text.RegularExpressions.Regex.Replace(cleanedHtml, pattern2, replacement2);
-
-        //Email Un-Protected
+        // Email Un-Protected
         cleanedHtml = DecodeObfuscatedEmails(cleanedHtml);
 
+        // Write cleaned HTML to a temporary file
         string tempFolder = Path.Combine(destinationRootDirectory, "Temp");
         Directory.CreateDirectory(tempFolder);
         string tempHtmlFilePath = Path.Combine(tempFolder, "cleaned_temp.html");
         File.WriteAllText(tempHtmlFilePath, cleanedHtml);
 
-        Document document = new Document();
-        document.LoadFromFile(tempHtmlFilePath);
-
-        string outputFilePath = Path.Combine(destinationDirectory, updatedFileName + ".docx");
-        document.SaveToFile(outputFilePath, FileFormat.Docx2013);
+        // Convert to MHTML
+        string outputFilePath = Path.Combine(destinationDirectory, Path.GetFileNameWithoutExtension(updatedFileName) + (Path.GetExtension(updatedFileName).Equals(".htm", StringComparison.OrdinalIgnoreCase) ? ".mhtm" : ".mhtml"));
+        ConvertToMhtml(tempHtmlFilePath, outputFilePath);
 
         logBuilder.AppendLine($"Processed File: {originalFilePath}, Converted: Yes, Output File: {outputFilePath}");
     }
 
+    static void ConvertToMhtml(string htmlFilePath, string outputFilePath)
+    {
+        var message = new MimeMessage();
+        var body = new TextPart("html")
+        {
+            Text = File.ReadAllText(htmlFilePath)
+        };
+
+        var multipart = new Multipart("related")
+        {
+            body
+        };
+
+        message.Body = multipart;
+
+        using (var stream = File.Create(outputFilePath))
+        {
+            message.WriteTo(stream);
+        }
+    }
+
     static string PreprocessHtml(string filePath)
     {
-        HtmlDocument doc = new HtmlDocument();
-        doc.Load(filePath);
-        doc.OptionFixNestedTags = true;
+        var doc = new HtmlDocument();
+        using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read))
+        {
+            doc.Load(stream, Encoding.UTF8);
+        }
 
+        doc.OptionFixNestedTags = true;
         RemoveProblematicTags(doc);
 
-        using (StringWriter writer = new StringWriter())
+        using (var writer = new StringWriter())
         {
             doc.Save(writer);
             return writer.ToString();
@@ -154,25 +172,26 @@ class Program
 
     static void RemoveProblematicTags(HtmlDocument doc)
     {
-        //var nodes = doc.DocumentNode.SelectNodes("//a[not(@href)]");
-        //if (nodes != null)
-        //{
-        //    foreach (var node in nodes)
-        //    {
-        //        node.Remove();
-        //    }
-        //}
+        // Example: Remove <script> tags
+        var scriptNodes = doc.DocumentNode.SelectNodes("//script");
+        if (scriptNodes != null)
+        {
+            foreach (var node in scriptNodes)
+            {
+                node.Remove();
+            }
+        }
     }
 
     public static string DecodeObfuscatedEmails(string htmlContent)
     {
         try
         {
-            var oregex = new System.Text.RegularExpressions.Regex(@"<(?<tag>[a-zA-Z]+)[^>]*data-cfemail=([\""']?)(?<cfemail>[a-fA-F0-9]+)\1[^>]*>(?<innerContent>.*?)</\k<tag>>", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline);
-            var omatchings = oregex.Matches(htmlContent);
-            if (omatchings.Count > 0)
+            var regex = new Regex(@"<(?<tag>[a-zA-Z]+)[^>]*data-cfemail=([\""']?)(?<cfemail>[a-fA-F0-9]+)\1[^>]*>(?<innerContent>.*?)</\k<tag>>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            var matches = regex.Matches(htmlContent);
+            if (matches.Count > 0)
             {
-                foreach (System.Text.RegularExpressions.Match match in omatchings)
+                foreach (Match match in matches)
                 {
                     string tag = match.Groups["tag"].Value;
                     string cfemail = match.Groups["cfemail"].Value;
@@ -208,7 +227,6 @@ class Program
 
     public static string DecodeEmail(string obfuscatedEmail)
     {
-        // Ensure the obfuscatedEmail has at least 2 characters for the key
         if (obfuscatedEmail.Length < 2)
         {
             throw new ArgumentException("Invalid obfuscated email format.");
@@ -221,7 +239,6 @@ class Program
         {
             for (int i = 2; i < obfuscatedEmail.Length; i += 2)
             {
-                // Ensure there are enough characters left for a valid substring
                 if (i + 2 <= obfuscatedEmail.Length)
                 {
                     int charCode = Convert.ToInt32(obfuscatedEmail.Substring(i, 2), 16) ^ key;
@@ -236,7 +253,7 @@ class Program
         catch (Exception ex)
         {
             Console.WriteLine(ex);
-            return string.Empty; // Return an empty string or handle the error as needed
+            return string.Empty;
         }
         return email.ToString();
     }
