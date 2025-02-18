@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using MimeKit;
 using System.Data.SqlClient;
+using System.Web;
 
 class Program
 {
@@ -76,7 +77,7 @@ class Program
             }
         }
 
-        File.WriteAllText(logFilePath, logBuilder.ToString());
+        File.WriteAllText(logFilePath, logBuilder.ToString(), Encoding.UTF8);
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("Processing completed. Logs saved to " + logFilePath);
         Console.ResetColor();
@@ -104,25 +105,31 @@ class Program
         string updatedFileName = fileName;
         if (string.IsNullOrEmpty(updatedFileName))
         {
-            File.AppendAllText(notConvertedLogFilePath, originalFilePath + Environment.NewLine);
+            File.AppendAllText(notConvertedLogFilePath, originalFilePath + Environment.NewLine, Encoding.UTF8);
             return;
         }
 
         // Process HTML content in chunks to handle large files
         string cleanedHtml = PreprocessHtml(originalFilePath);
 
-        // Correct URLs
+        // Correct URLs with special characters
         cleanedHtml = Regex.Replace(cleanedHtml, @"href=""file://[^""]*?(/#/.*?)""", @"href=""$1""");
         cleanedHtml = Regex.Replace(cleanedHtml, @"href=""([^""]*?)#\\qms\?(.*?)""", @"href=""$1/#/qms?$2""");
 
-        // Email Un-Protected
-        cleanedHtml = DecodeObfuscatedEmails(cleanedHtml);
+        // Decode HTML entities
+        cleanedHtml = HttpUtility.HtmlDecode(cleanedHtml);
+
+        // Fix bullet points and lists
+        cleanedHtml = cleanedHtml.Replace("<p>•", "<ul><li>")
+                                 .Replace("•</p>", "</li></ul>")
+                                 .Replace("<p>-", "<ul><li>")
+                                 .Replace("-</p>", "</li></ul>");
 
         // Write cleaned HTML to a temporary file
         string tempFolder = Path.Combine(destinationRootDirectory, "Temp");
         Directory.CreateDirectory(tempFolder);
         string tempHtmlFilePath = Path.Combine(tempFolder, "cleaned_temp.html");
-        File.WriteAllText(tempHtmlFilePath, cleanedHtml);
+        File.WriteAllText(tempHtmlFilePath, cleanedHtml, Encoding.UTF8);
 
         // Convert to MHTML
         string outputFilePath = Path.Combine(destinationDirectory, Path.GetFileNameWithoutExtension(updatedFileName) + (Path.GetExtension(updatedFileName).Equals(".htm", StringComparison.OrdinalIgnoreCase) ? ".mhtm" : ".mhtml"));
@@ -136,7 +143,7 @@ class Program
         var message = new MimeMessage();
         var body = new TextPart("html")
         {
-            Text = File.ReadAllText(htmlFilePath)
+            Text = File.ReadAllText(htmlFilePath, Encoding.UTF8)
         };
 
         var multipart = new Multipart("related")
@@ -173,14 +180,14 @@ class Program
     static void RemoveProblematicTags(HtmlDocument doc)
     {
         // Example: Remove <script> tags
-        //var scriptNodes = doc.DocumentNode.SelectNodes("//script");
-        //if (scriptNodes != null)
-        //{
-        //    foreach (var node in scriptNodes)
-        //    {
-        //        node.Remove();
-        //    }
-        //}
+        var scriptNodes = doc.DocumentNode.SelectNodes("//script");
+        if (scriptNodes != null)
+        {
+            foreach (var node in scriptNodes)
+            {
+                node.Remove();
+            }
+        }
     }
 
     public static string DecodeObfuscatedEmails(string htmlContent)
