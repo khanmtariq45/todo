@@ -1,22 +1,12 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
 using Spire.Doc;
-using System.Data.SqlClient;
 
 class Program
 {
     static void Main(string[] args)
     {
-        Console.WriteLine("Is the console app being run locally or on the server? (local/server): ");
-        string environment = Console.ReadLine().Trim().ToLower();
-
-        string connectionString = environment == "local"
-            ? "data source=dev.c5owyuw64shd.ap-south-1.rds.amazonaws.com,1982;database=JIBE_Main;uid=j2;pwd=123456;max pool size=200;"
-            : GetConnectionStringFromUser();
-
         Console.WriteLine("Please enter the folder path containing Word files: ");
         string rootDirectory = Console.ReadLine();
 
@@ -40,24 +30,40 @@ class Program
 
         StringBuilder logBuilder = new StringBuilder();
         string logFilePath = Path.Combine(destinationRootDirectory, "ConversionLog.txt");
-        string notConvertedLogFilePath = Path.Combine(destinationRootDirectory, "FailedConversions.txt");
-
-        HashSet<string> processedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var files = Directory.EnumerateFiles(rootDirectory, "*.docx", SearchOption.AllDirectories);
 
         foreach (var originalFilePath in files)
         {
-            if (processedFiles.Contains(originalFilePath))
-                continue;
-
-            processedFiles.Add(originalFilePath);
-
             try
             {
-                ProcessFile(originalFilePath, connectionString, logBuilder, rootDirectory, destinationRootDirectory, notConvertedLogFilePath);
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"Successfully processed: {originalFilePath}");
+                Console.WriteLine($"Processing: {originalFilePath}");
+
+                // Load the Word document
+                Document document = new Document();
+                document.LoadFromFile(originalFilePath);
+
+                // Define the output file path
+                string fileName = Path.GetFileNameWithoutExtension(originalFilePath);
+                string outputFilePath = Path.Combine(destinationRootDirectory, $"{fileName}.mhtml");
+
+                // Save the document as MHTML
+                document.SaveToFile(outputFilePath, FileFormat.MHtml);
+
+                // Verify if the file was created
+                if (File.Exists(outputFilePath))
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"File successfully created: {outputFilePath}");
+                    logBuilder.AppendLine($"Converted: {originalFilePath} => {outputFilePath}");
+                }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"File not created: {outputFilePath}");
+                    logBuilder.AppendLine($"Failed to create file: {outputFilePath}");
+                }
             }
             catch (Exception ex)
             {
@@ -71,87 +77,12 @@ class Program
             }
         }
 
+        // Save logs to file
         File.WriteAllText(logFilePath, logBuilder.ToString());
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("Conversion process completed. Logs saved to " + logFilePath);
         Console.ResetColor();
         Console.WriteLine("Press any key to exit...");
         Console.ReadKey();
-    }
-
-    static string GetConnectionStringFromUser()
-    {
-        Console.WriteLine("Please enter the connection string for the server: ");
-        return Console.ReadLine();
-    }
-
-    static void ProcessFile(string originalFilePath, string connectionString, StringBuilder logBuilder, string rootDirectory, string destinationRootDirectory, string notConvertedLogFilePath)
-    {
-        string fileName = Path.GetFileName(originalFilePath);
-        string relativePath = GetRelativePath(rootDirectory, originalFilePath);
-        string destinationDirectory = Path.Combine(destinationRootDirectory, Path.GetDirectoryName(relativePath));
-
-        if (!Directory.Exists(destinationDirectory))
-        {
-            Directory.CreateDirectory(destinationDirectory);
-        }
-
-        string updatedFileName = GetFileNameFromDatabase(fileName, connectionString);
-        if (string.IsNullOrEmpty(updatedFileName))
-        {
-            updatedFileName = Path.GetFileNameWithoutExtension(fileName);
-        }
-
-        // Load the Word document
-        Document document = new Document();
-        document.LoadFromFile(originalFilePath);
-
-        // Define the output file path
-        string outputFilePath = Path.Combine(destinationDirectory, $"{updatedFileName}.mhtml");
-
-        // Save the document as MHTML
-        document.SaveToFile(outputFilePath, FileFormat.MHtml);
-
-        // Verify if the file was created
-        if (File.Exists(outputFilePath))
-        {
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"File successfully created: {outputFilePath}");
-            logBuilder.AppendLine($"Converted: {originalFilePath} => {outputFilePath}");
-        }
-        else
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"File not created: {outputFilePath}");
-            logBuilder.AppendLine($"Failed to create file: {outputFilePath}");
-        }
-    }
-
-    static string GetFileNameFromDatabase(string fileName, string connectionString)
-    {
-        string cleanFileName = Path.GetFileNameWithoutExtension(fileName);
-        string query = "SELECT LogFileID FROM qmsdtlsfile_log WHERE FilePath LIKE @fileName";
-        using (var connection = new SqlConnection(connectionString))
-        {
-            var command = new SqlCommand(query, connection);
-            command.Parameters.AddWithValue("@fileName", "%" + cleanFileName + "%");
-            try
-            {
-                connection.Open();
-                var result = command.ExecuteScalar();
-                return result?.ToString();
-            }
-            catch
-            {
-                return null;
-            }
-        }
-    }
-
-    static string GetRelativePath(string basePath, string fullPath)
-    {
-        Uri baseUri = new Uri(basePath);
-        Uri fullUri = new Uri(fullPath);
-        return Uri.UnescapeDataString(baseUri.MakeRelativeUri(fullUri).ToString().Replace('/', Path.DirectorySeparatorChar));
     }
 }
