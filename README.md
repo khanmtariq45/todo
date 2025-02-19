@@ -1,5 +1,3 @@
-
-
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -113,11 +111,13 @@ class Program
         {
             doc = wordApp.Documents.Open(inputFilePath, ReadOnly: false, Visible: false);
 
-            FixEncoding(outputFilePath);
-            // Force UTF-8 encoding to prevent extra characters
+            // Ensure UTF-8 encoding
             doc.WebOptions.Encoding = Microsoft.Office.Core.MsoEncoding.msoEncodingUTF8;
             doc.WebOptions.OptimizeForBrowser = false;
-            doc.SaveAs2(outputFilePath, WdSaveFormat.wdFormatWebArchive);
+
+            // Save as MHTML with UTF-8 encoding
+            doc.SaveAs2(outputFilePath, WdSaveFormat.wdFormatWebArchive, Encoding: Microsoft.Office.Core.MsoEncoding.msoEncodingUTF8);
+
             Console.WriteLine($"Converted: {inputFilePath} → {outputFilePath}");
             return true;
         }
@@ -128,18 +128,14 @@ class Program
         }
         finally
         {
-            doc?.Close(false);
+            if (doc != null)
+            {
+                doc.Close(false);
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(doc);
+            }
             wordApp.Quit();
-            System.Runtime.InteropServices.Marshal.ReleaseComObject(doc);
             System.Runtime.InteropServices.Marshal.ReleaseComObject(wordApp);
         }
-    }
-
-    static void FixEncoding(string filePath)
-    {
-        string content = File.ReadAllText(filePath, Encoding.Default);
-        content = content.Replace("Â", "");
-        File.WriteAllText(filePath, content, Encoding.UTF8);
     }
 
     static string GetRelativePath(string basePath, string fullPath)
