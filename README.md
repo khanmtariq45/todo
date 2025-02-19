@@ -102,13 +102,29 @@ class Program
             updatedFileName = Path.GetFileNameWithoutExtension(fileName);
         }
 
+        // Load the Word document
         Document document = new Document();
         document.LoadFromFile(originalFilePath);
 
+        // Define the output file path
         string outputFilePath = Path.Combine(destinationDirectory, $"{updatedFileName}.mhtml");
+
+        // Save the document as MHTML
         document.SaveToFile(outputFilePath, FileFormat.MHtml);
 
-        logBuilder.AppendLine($"Converted: {originalFilePath} => {outputFilePath}");
+        // Verify if the file was created
+        if (File.Exists(outputFilePath))
+        {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"File successfully created: {outputFilePath}");
+            logBuilder.AppendLine($"Converted: {originalFilePath} => {outputFilePath}");
+        }
+        else
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"File not created: {outputFilePath}");
+            logBuilder.AppendLine($"Failed to create file: {outputFilePath}");
+        }
     }
 
     static string GetFileNameFromDatabase(string fileName, string connectionString)
