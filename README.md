@@ -1,162 +1,51 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text;
-using Microsoft.Office.Interop.Word;
+DECLARE @SQL_Script NVARCHAR(MAX);
 
-class Program
-{
-    static void Main(string[] args)
-    {
-        Console.WriteLine("Is the console app being run locally or on the server? (local/server): ");
-        string environment = Console.ReadLine().Trim().ToLower();
+SET @SQL_Script = N'
+EXEC [inf].[utils_inf_backup_table] ''QMS_DTL_Vessel_Assignment'';
+EXEC [inf].[utils_inf_backup_table] ''qms_file_vessel_sync_ledger'';
+EXEC [inf].[utils_inf_backup_table] ''QMS_Sync_History'';
 
-        Console.WriteLine("Please enter the folder path containing Word files: ");
-        string rootDirectory = Console.ReadLine();
 
-        if (!Directory.Exists(rootDirectory))
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("Invalid directory path.");
-            Console.ResetColor();
-            Console.WriteLine("Press any key to exit...");
-            Console.ReadKey();
-            return;
-        }
+DELETE va
+FROM QMS_DTL_Vessel_Assignment va
+INNER JOIN qmsdtlsfile_log qdf ON qdf.ID = va.Document_Id
+INNER JOIN qms_file_vessel_sync_ledger ledg ON ledg.vessel_assignment_id = va.ID
+INNER JOIN lib_vessels Vessel ON Vessel.Vessel_ID = va.Vessel_ID
+WHERE va.Active_Status = 1
+  AND Vessel.installation = 1
+  AND Vessel.autosync = 1
+  AND Vessel.Active_Status = 1
+  AND ledg.status <> ''c''
+  AND va.Vessel_ID in (7721, 6764, 5653, 5645, 7517, 6068, 6432, 5715, 5302, 7186)
+  AND EXISTS (
+      SELECT 1
+      FROM qmsdtlsfile_log qdfl WITH (NOLOCK)
+      WHERE qdfl.ID = va.Document_ID
+        AND (qdfl.Active_status = 0 OR va.FileVersion <> qdfl.Version)
+  );
 
-        Console.WriteLine("Please enter the destination folder path for MHTML files: ");
-        string destinationRootDirectory = Console.ReadLine();
+DELETE ledg
+FROM qms_file_vessel_sync_ledger ledg
+inner join QMS_DTL_Vessel_Assignment va on va.id = ledg.vessel_assignment_id 
+where va.Vessel_ID in (7721, 6764, 5653, 5645, 7517, 6068, 6432, 5715, 5302, 7186) and ledg.vessel_assignment_id not in (select id from QMS_DTL_Vessel_Assignment with (nolock) where active_status = 1);
 
-        if (!Directory.Exists(destinationRootDirectory))
-        {
-            Directory.CreateDirectory(destinationRootDirectory);
-        }
+DELETE qh
+FROM QMS_Sync_History qh
+inner join QMS_DTL_Vessel_Assignment va on va.Document_ID = qh.FileID and va.FileVersion = qh.FileVersion
+WHERE 
+va.Vessel_ID in (7721, 6764, 5653, 5645, 7517, 6068, 6432, 5715, 5302, 7186) and
+NOT EXISTS (
+    SELECT 1
+    FROM QMS_DTL_Vessel_Assignment qa with (nolock)
+    WHERE qa.Document_ID = qh.FileID
+      AND qa.FileVersion = qh.FileVersion
+);
+';
 
-        StringBuilder logBuilder = new StringBuilder();
-        string logFilePath = Path.Combine(destinationRootDirectory, "ConversionLogs.txt");
-        string notConvertedLogFilePath = Path.Combine(destinationRootDirectory, "NotConvertedFiles.txt");
 
-        HashSet<string> processedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        var wordFiles = Directory.EnumerateFiles(rootDirectory, "*.docx", SearchOption.AllDirectories)
-                                 .Union(Directory.EnumerateFiles(rootDirectory, "*.doc", SearchOption.AllDirectories))
-                                 .Distinct(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var originalFilePath in wordFiles)
-        {
-            if (processedFiles.Contains(originalFilePath))
-                continue;
-
-            processedFiles.Add(originalFilePath);
-
-            try
-            {
-                ProcessFile(originalFilePath, logBuilder, rootDirectory, destinationRootDirectory, notConvertedLogFilePath);
-               
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"Successfully processed: {originalFilePath}");
-            }
-            catch (Exception ex)
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"Error processing file {originalFilePath}: {ex.Message}");
-                logBuilder.AppendLine($"Error processing file {originalFilePath}: {ex.Message}");
-            }
-            finally
-            {
-                Console.ResetColor();
-            }
-        }
-
-        File.WriteAllText(logFilePath, logBuilder.ToString());
-        Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine("Processing completed. Logs saved to " + logFilePath);
-        Console.ResetColor();
-        Console.WriteLine("Press any key to exit...");
-        Console.ReadKey();
-    }
-
-    static void ProcessFile(string originalFilePath, StringBuilder logBuilder, string rootDirectory, string destinationRootDirectory, string notConvertedLogFilePath)
-    {
-        string fileName = Path.GetFileNameWithoutExtension(originalFilePath); // Remove extension
-        string relativePath = GetRelativePath(rootDirectory, originalFilePath);
-        string destinationDirectory = Path.Combine(destinationRootDirectory, Path.GetDirectoryName(relativePath));
-
-        if (!Directory.Exists(destinationDirectory))
-        {
-            Directory.CreateDirectory(destinationDirectory);
-        }
-
-        string outputFilePath = Path.Combine(destinationDirectory, fileName + ".mhtml");
-
-        bool success = ConvertWordToMhtml(originalFilePath, outputFilePath);
-
-        if (success)
-        {
-            // Post-process the MHTML file to remove unwanted characters
-            CleanMhtmlFile(outputFilePath);
-
-            logBuilder.AppendLine($"Processed File: {originalFilePath}, Converted: Yes, Output File: {outputFilePath}");
-        }
-        else
-        {
-            File.AppendAllText(notConvertedLogFilePath, originalFilePath + Environment.NewLine);
-        }
-    }
-
-    static bool ConvertWordToMhtml(string inputFilePath, string outputFilePath)
-    {
-        Application wordApp = new Application();
-        Document doc = null;
-
-        try
-        {
-            doc = wordApp.Documents.Open(inputFilePath, ReadOnly: false, Visible: false);
-
-            // Ensure UTF-8 encoding
-            doc.WebOptions.Encoding = Microsoft.Office.Core.MsoEncoding.msoEncodingUTF8;
-            doc.WebOptions.OptimizeForBrowser = false;
-
-            // Save as MHTML with UTF-8 encoding
-            doc.SaveAs2(outputFilePath, WdSaveFormat.wdFormatWebArchive, Encoding: Microsoft.Office.Core.MsoEncoding.msoEncodingUTF8);
-
-            Console.WriteLine($"Converted: {inputFilePath} → {outputFilePath}");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error converting {inputFilePath} to MHTML: {ex.Message}");
-            return false;
-        }
-        finally
-        {
-            if (doc != null)
-            {
-                doc.Close(false);
-                System.Runtime.InteropServices.Marshal.ReleaseComObject(doc);
-            }
-            wordApp.Quit();
-            System.Runtime.InteropServices.Marshal.ReleaseComObject(wordApp);
-        }
-    }
-
-    static void CleanMhtmlFile(string filePath)
-    {
-        // Read the MHTML file with UTF-8 encoding
-        string content = File.ReadAllText(filePath, Encoding.UTF8);
-
-        // Remove unwanted characters (e.g., "Â")
-        content = content.Replace("Â", "");
-
-        // Write the cleaned content back to the file
-        File.WriteAllText(filePath, content, Encoding.UTF8);
-    }
-
-    static string GetRelativePath(string basePath, string fullPath)
-    {
-        Uri baseUri = new Uri(basePath);
-        Uri fullUri = new Uri(fullPath);
-        return Uri.UnescapeDataString(baseUri.MakeRelativeUri(fullUri).ToString().Replace('/', Path.DirectorySeparatorChar));
-    }
-}
+EXEC [inf].[register_script_for_execution] 
+    'QMS', 
+    'QMS_Document', 
+    'DB Change 989173: DB Change - SLOMAN NEPTUN - Multiple Vessels - In QMS files were not sync to Vessels.', 
+    'O', 
+    @SQL_Script;
