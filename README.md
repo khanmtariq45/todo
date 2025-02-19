@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
-using Spire.Doc;
+using Microsoft.Office.Interop.Word;
 
 class Program
 {
@@ -33,6 +33,11 @@ class Program
 
         var files = Directory.EnumerateFiles(rootDirectory, "*.docx", SearchOption.AllDirectories);
 
+        // Initialize Microsoft Word application
+        Application wordApp = new Application();
+        wordApp.Visible = false; // Run Word in the background
+        wordApp.DisplayAlerts = WdAlertLevel.wdAlertsNone; // Suppress alerts
+
         foreach (var originalFilePath in files)
         {
             try
@@ -40,16 +45,18 @@ class Program
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.WriteLine($"Processing: {originalFilePath}");
 
-                // Load the Word document
-                Document document = new Document();
-                document.LoadFromFile(originalFilePath);
-
                 // Define the output file path
                 string fileName = Path.GetFileNameWithoutExtension(originalFilePath);
                 string outputFilePath = Path.Combine(destinationRootDirectory, $"{fileName}.mhtml");
 
+                // Open the Word document
+                Document wordDoc = wordApp.Documents.Open(originalFilePath);
+
                 // Save the document as MHTML
-                document.SaveToFile(outputFilePath, FileFormat.MHtml);
+                wordDoc.SaveAs2(outputFilePath, WdSaveFormat.wdFormatWebArchive);
+
+                // Close the document
+                wordDoc.Close(SaveChanges: false);
 
                 // Verify if the file was created
                 if (File.Exists(outputFilePath))
@@ -76,6 +83,12 @@ class Program
                 Console.ResetColor();
             }
         }
+
+        // Quit the Word application
+        wordApp.Quit();
+
+        // Release COM objects
+        System.Runtime.InteropServices.Marshal.ReleaseComObject(wordApp);
 
         // Save logs to file
         File.WriteAllText(logFilePath, logBuilder.ToString());
