@@ -94,6 +94,9 @@ class Program
 
         if (success)
         {
+            // Post-process the MHTML file to remove unwanted characters
+            CleanMhtmlFile(outputFilePath);
+
             logBuilder.AppendLine($"Processed File: {originalFilePath}, Converted: Yes, Output File: {outputFilePath}");
         }
         else
@@ -136,6 +139,18 @@ class Program
             wordApp.Quit();
             System.Runtime.InteropServices.Marshal.ReleaseComObject(wordApp);
         }
+    }
+
+    static void CleanMhtmlFile(string filePath)
+    {
+        // Read the MHTML file with UTF-8 encoding
+        string content = File.ReadAllText(filePath, Encoding.UTF8);
+
+        // Remove unwanted characters (e.g., "Â")
+        content = content.Replace("Â", "");
+
+        // Write the cleaned content back to the file
+        File.WriteAllText(filePath, content, Encoding.UTF8);
     }
 
     static string GetRelativePath(string basePath, string fullPath)
