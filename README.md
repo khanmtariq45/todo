@@ -1,136 +1,93 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text;
-using Microsoft.Office.Interop.Word;
+DECLARE @SQL_Script NVARCHAR(MAX);
 
-class Program
-{
-    static void Main(string[] args)
-    {
-        Console.WriteLine("Is the console app being run locally or on the server? (local/server): ");
-        string environment = Console.ReadLine().Trim().ToLower();
+ 
 
-        Console.WriteLine("Please enter the folder path containing Word files: ");
-        string rootDirectory = Console.ReadLine();
+SET @SQL_Script = N'
 
-        if (!Directory.Exists(rootDirectory))
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("Invalid directory path.");
-            Console.ResetColor();
-            Console.WriteLine("Press any key to exit...");
-            Console.ReadKey();
-            return;
-        }
+DECLARE @DocID NVARCHAR(20);
 
-        Console.WriteLine("Please enter the destination folder path for MHTML files: ");
-        string destinationRootDirectory = Console.ReadLine();
+DECLARE @VesselID INT;
 
-        if (!Directory.Exists(destinationRootDirectory))
-        {
-            Directory.CreateDirectory(destinationRootDirectory);
-        }
+ 
 
-        StringBuilder logBuilder = new StringBuilder();
-        string logFilePath = Path.Combine(destinationRootDirectory, "ConversionLogs.txt");
-        string notConvertedLogFilePath = Path.Combine(destinationRootDirectory, "NotConvertedFiles.txt");
+DECLARE curDoc CURSOR FOR
 
-        HashSet<string> processedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+SELECT DISTINCT lf.id, va.vessel_ID
 
-        var wordFiles = Directory.EnumerateFiles(rootDirectory, "*.docx", SearchOption.AllDirectories)
-                                 .Union(Directory.EnumerateFiles(rootDirectory, "*.doc", SearchOption.AllDirectories))
-                                 .Distinct(StringComparer.OrdinalIgnoreCase);
+FROM QMSdtlsFile_Log lf with (nolock)
 
-        foreach (var originalFilePath in wordFiles)
-        {
-            if (processedFiles.Contains(originalFilePath))
-                continue;
+INNER JOIN QMS_DTL_Vessel_Assignment va ON va.Document_ID = lf.id
 
-            processedFiles.Add(originalFilePath);
+INNER JOIN qms_file_vessel_sync_ledger led ON led.vessel_assignment_id = va.id
 
-            try
-            {
-                ProcessFile(originalFilePath, logBuilder, rootDirectory, destinationRootDirectory, notConvertedLogFilePath);
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"Successfully processed: {originalFilePath}");
-            }
-            catch (Exception ex)
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"Error processing file {originalFilePath}: {ex.Message}");
-                logBuilder.AppendLine($"Error processing file {originalFilePath}: {ex.Message}");
-            }
-            finally
-            {
-                Console.ResetColor();
-            }
-        }
+INNER JOIN lib_vessels Vessel ON Vessel.Vessel_ID = va.Vessel_ID
 
-        File.WriteAllText(logFilePath, logBuilder.ToString());
-        Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine("Processing completed. Logs saved to " + logFilePath);
-        Console.ResetColor();
-        Console.WriteLine("Press any key to exit...");
-        Console.ReadKey();
-    }
+WHERE va.Active_Status = 1 and vessel.installation = 1 and Vessel.active_status = 1
 
-    static void ProcessFile(string originalFilePath, StringBuilder logBuilder, string rootDirectory, string destinationRootDirectory, string notConvertedLogFilePath)
-    {
-        string fileName = Path.GetFileNameWithoutExtension(originalFilePath); // Remove extension
-        string relativePath = GetRelativePath(rootDirectory, originalFilePath);
-        string destinationDirectory = Path.Combine(destinationRootDirectory, Path.GetDirectoryName(relativePath));
+and vessel.autosync = 1 AND lf.NodeType = 0 AND led.status IN (''r'', ''f'', ''p'');
 
-        if (!Directory.Exists(destinationDirectory))
-        {
-            Directory.CreateDirectory(destinationDirectory);
-        }
+ 
 
-        string outputFilePath = Path.Combine(destinationDirectory, fileName + ".mhtml");
+OPEN curDoc;
 
-        bool success = ConvertWordToMhtml(originalFilePath, outputFilePath);
+FETCH NEXT FROM curDoc INTO @DocID, @VesselID;
 
-        if (success)
-        {
-            logBuilder.AppendLine($"Processed File: {originalFilePath}, Converted: Yes, Output File: {outputFilePath}");
-        }
-        else
-        {
-            File.AppendAllText(notConvertedLogFilePath, originalFilePath + Environment.NewLine);
-        }
-    }
+ 
 
-    static bool ConvertWordToMhtml(string inputFilePath, string outputFilePath)
-    {
-        Application wordApp = new Application();
-        Document doc = null;
+WHILE @@FETCH_STATUS = 0
 
-        try
-        {
-            doc = wordApp.Documents.Open(inputFilePath, ReadOnly: false, Visible: false);
-            doc.SaveAs2(outputFilePath, WdSaveFormat.wdFormatWebArchive);
-            Console.WriteLine($"Converted: {inputFilePath} → {outputFilePath}");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error converting {inputFilePath} to MHTML: {ex.Message}");
-            return false;
-        }
-        finally
-        {
-            doc?.Close(false);
-            wordApp.Quit();
-            System.Runtime.InteropServices.Marshal.ReleaseComObject(doc);
-            System.Runtime.InteropServices.Marshal.ReleaseComObject(wordApp);
-        }
-    }
+BEGIN
 
-    static string GetRelativePath(string basePath, string fullPath)
-    {
-        Uri baseUri = new Uri(basePath);
-        Uri fullUri = new Uri(fullPath);
-        return Uri.UnescapeDataString(baseUri.MakeRelativeUri(fullUri).ToString().Replace('/', Path.DirectorySeparatorChar));
-    }
-}
+Â Â Â  EXEC [SYNC_SP_DataSynchronizer_DataLog] '''', '''', '''', @VesselID, ''EXEC [inf].[utils_inf_backup_table] ''''QMSdtlsFile_Log'''''';
+
+Â Â Â  EXEC [SYNC_SP_DataSynchronizer_DataLog] '''', '''', '''', @VesselID, ''EXEC [inf].[utils_inf_backup_table] ''''qms.full_text_content'''''';
+
+ 
+
+Â Â Â  DECLARE @PkCondition VARCHAR(100) = ''ID='''''' + CAST(@DocID AS VARCHAR) + '''''''';
+
+Â Â Â  DECLARE @TableName VARCHAR(100) = ''QMSdtlsFile_Log'';
+
+Â Â Â  EXEC SYNC_SP_DataSynch_MultiPK_DataLog @TableName, @PkCondition, @VesselID;
+
+ 
+
+Â Â Â  IF EXISTS (SELECT 1 FROM qms.full_text_content WITH (NOLOCK) WHERE document_id = @DocID)
+
+Â Â Â  BEGIN
+
+Â Â Â Â Â Â Â  EXEC [qms].[sp_sync_full_text_content] @DocID, @VesselID;
+
+Â Â Â  END;
+
+ 
+
+Â Â Â  FETCH NEXT FROM curDoc INTO @DocID, @VesselID;
+
+END
+
+ 
+
+CLOSE curDoc;
+
+DEALLOCATE curDoc;
+
+';
+
+ 
+
+ 
+
+select @SQL_Script
+
+EXEC [inf].[register_script_for_execution]
+
+Â Â Â  'QMS',
+
+Â Â Â  'QMS_Document',
+
+Â Â Â  'DB Change 987757: Bug 979219: OSG - Multiple Vessels - In QMS, files were not sync to Vessels.',
+
+Â Â Â  'O',
+
+Â Â Â  @SQL_Script;
