@@ -3,11 +3,11 @@ drop table if exists #TempFilePaths
 CREATE TABLE #TempFilePaths (
     parent_id INT,
 	file_id INT,
-	qms_filename NVARCHAR(MAX),
-	file_name NVARCHAR(MAX),
-    filepath NVARCHAR(MAX),
-    parent_path NVARCHAR(MAX),
-    active_status NVARCHAR(MAX)
+	qms_filename VARCHAR(MAX),
+	file_name VARCHAR(MAX),
+    filepath varchar(550),
+    parent_path VARCHAR(MAX),
+    active_status VARCHAR(MAX)
 );
  
 WITH ParentFolders AS (
