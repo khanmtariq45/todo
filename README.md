@@ -1,4 +1,12 @@
-drop table if exists #TempFilePaths
+I want to run this SP 
+EXEC [inf].[register_script_for_execution] 
+    'QMS', 
+    'QMS_Document', 
+    'DB Change 994515: OSG - Multiple Vessels - In QMS, files were not sync to Vessels.', 
+    'O', 
+    @SQL_Script;
+
+make below script as @SQL_Script
  
 CREATE TABLE #TempFilePaths (
     parent_id INT,
