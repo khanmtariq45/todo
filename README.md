@@ -1,42 +1,24 @@
-DECLARE @SQL_Script NVARCHAR(MAX);
+WITH ParentFolders AS (
+    SELECT id AS parent_id, filepath AS parent_path
+    FROM qmsdtlsfile_log with (nolock)
+    WHERE nodetype = 1 and active_status = 1
+),
+ChildFiles AS (
+    SELECT f.LogFileID as file_name,f.active_status, f.id AS file_id, f.filepath, f.date_of_modification, f.date_of_creatation, p.parent_id, p.parent_path
+    FROM qmsdtlsfile_log f with (nolock)
+    JOIN ParentFolders p ON f.parentid = p.parent_id
+    WHERE f.nodetype = 0 and f.active_status = 1
+),
+CleanedPaths AS (
+    SELECT file_id, file_name, active_status, filepath, parent_id, parent_path, date_of_modification, date_of_creatation,
+           SUBSTRING(filepath, 1, LEN(filepath) - CHARINDEX('/', REVERSE(filepath))) AS cleaned_filepath
+    FROM ChildFiles
+)
+SELECT parent_id, file_id, file_name, filepath, parent_path, active_status, date_of_modification, date_of_creatation
+FROM CleanedPaths
+WHERE cleaned_filepath <> parent_path order by parent_id desc
 
--- Build the SQL script with proper escaping
-SET @SQL_Script = N'
-    EXEC [inf].[utils_inf_backup_table] ''PURC_DTL_REQSN_Status'';
-    EXEC [inf].[utils_inf_backup_table] ''PURC_DTL_SUPPLY_ITEMS'';
 
-    INSERT INTO [PURC_DTL_REQSN_Status] (
-        [ID],
-        [OFFICE_ID],
-        [VESSEL_CODE],
-        [REQUISITION_CODE],
-        [DOCUMENT_CODE],
-        [REQUISITION_STATUS],
-        [REQUISITION_COMMENTS],
-        [Created_By]
-    )
-    VALUES (
-        (SELECT ISNULL(MAX(ID), 0) + 1 FROM PURC_DTL_REQSN_Status),
-        0,
-        ''6304'',
-        ''UST-ADM-OPEN-0000009/25'',
-        ''6304250220155258'',
-        ''NRQ'',
-        '''',
-        1
-    );
+I have recevied data like now I want to replace filePath with parent_path but firstly get QMS_ name which encrypted name of file add it to end of parent_path and set it to filepath
 
-    UPDATE PURC_DTL_SUPPLY_ITEMS
-    SET REQUISITION_CODE = ''UST-ADM-OPEN-0000009/25''
-    WHERE DOCUMENT_CODE = ''6304250220155258'';
-
-    EXEC [purc].[sync_vessel_to_office_requisition_data] ''6304250220155258'', ''6304'';
-';
-
--- Register the script for execution
-EXEC [inf].[register_script_for_execution]
-    @System_Name = 'QMS',
-    @Script_Name = 'QMS_Document',
-    @Description = 'AESM Bug 706153 DB Change 993117: AESM - Multiple Vessels - In QMS, vessel unable to view documents.',
-    @Execution_Type = 'O',
-    @SQL_Script = @SQL_Script;
+216	309	MLC Certification BGI.pdf	DOCUMENTS/Safety Management System (SMS)/D14 Personnel and Training/2 Appendices/D14 Appendix V MLC-Manual/Attachments/2 Authorised Agents/QMS_041b283d-e497-46c5-9145-9e256a328a6c.pdf	DOCUMENTS/Safety Management System (SMS)/D14 Personnel and Training/2 Appendices/D14 Appendix V MLC-Manual/Attachments/2 Authorised Agents/MLC Certification	1		2024-01-10 09:09:32.920
