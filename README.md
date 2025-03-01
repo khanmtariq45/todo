@@ -1,64 +1,72 @@
-I want to run that [register_script_for_execution]
+I need a @SQL_Script to run 
 EXEC [inf].[register_script_for_execution] 
     'QMS', 
     'QMS_Document', 
-    'DB Change 998351: EPS Prod - Demo Vessel - In EPS Manuals, search functionality is not working.', 
+    'DB Change 996907: DB Change - Bug 996800: SLOMAN NEPTUN - Office - In QMS, unable to view and download pdf files.', 
     'O', 
     @SQL_Script;
+	Please wrap below script in @SQL_Script to run SP 
 
-	in which I want a veriable @SQL_Script for below script 
+DECLARE @script nvarchar(max) = 'IF Exists(SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N''[dbo].[INF_LIB_Nav_Modules]'') AND type in (N''U''))
+		BEGIN
+			EXEC [inf].[utils_inf_backup_table] ''INF_LIB_Nav_Modules''
+	END
 
-CREATE OR ALTER proc qms_get_operation_history
-@FileID int=0
-As
-BEGIN
+	IF Exists(SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N''[dbo].[INF_LIB_Screens]'') AND type in (N''U''))
+        BEGIN
+			EXEC [inf].[utils_inf_backup_table] ''INF_LIB_Screens''
+    END
 
-select * into #approval_list from
- (
-			  (SELECT   QMS_FileOperationInfo.User_ID, 
-			  QMS_FileOperationInfo.Operation_Type, 
-			  QMS_FileOperationInfo.Operation_Date, 
-			  lib_user.First_Name AS First_Name, 
-			  lib_user.Last_Name, 
-			  (lib_user.First_Name + ' ' + lib_user.Last_Name) as UserName, 
-			  QMSdtlsFile_Log.LogFileID, 
-			  QMS_FileOperationInfo.Version, 
-			  QMSdtlsFile_Log.ID AS DocID,
-			  (null) as Approval_Level, 
-			  Remarks,
-			  LIB_USER.ACTIVE_STATUS as User_ACTIVE_STATUS,
-			  CAST('' AS VARCHAR(MAX)) AS FilePath
-				FROM         QMS_FileOperationInfo INNER JOIN
-								QMSdtlsFile_Log ON QMS_FileOperationInfo.FileID = QMSdtlsFile_Log.ID INNER JOIN
-								lib_user ON QMS_FileOperationInfo.User_ID = lib_user.UserID  
-				WHERE     QMSdtlsFile_Log.ID =@FileID and QMS_FileOperationInfo.Active_Status=1
-				)
- UNION
-             ( SELECT
-			 distinct  
-			 Approve_By User_ID,
-			 case when ApprovalStatus!=0 then 'APPROVED' else 'PENDING APPROVAL' end Operation_Type ,
-             cast(Date_Of_Approval as datetime) Operation_Date, 
-		     LIB_USER.First_Name AS First_Name, 
-             LIB_USER.Last_Name, 
-			 (LIB_USER.First_Name + ' ' + LIB_USER.Last_Name) as UserName, 
-			 LogFileID
-		    ,QMS_File_Approval.Version
-			,QMSdtlsFile_Log.ID AS DocID 
-			,case when QMS_FILE_APPROVAL.LevelID=1 then'First Approver' when QMS_FILE_APPROVAL.LevelID=2 then 'Second Approver' else 'Third Approver' end as Approval_Level, QMS_File_Approval.Remark
-			,LIB_USER.ACTIVE_STATUS as User_ACTIVE_STATUS,
-			CAST('' AS VARCHAR(MAX)) AS FilePath
-			FROM QMS_File_Approval 
-            INNER JOIN QMSdtlsFile_Log ON QMS_File_Approval.QMSID = QMSdtlsFile_Log.ID INNER JOIN
-            LIB_USER on QMS_File_Approval.Approve_By=LIB_USER.UserID where QMS_File_Approval.Active_Status=1 AND QMS_File_Approval.QMSID=@FileID 
-	        )
- )result
-			
-			Delete from #approval_list where User_ACTIVE_STATUS=0 and operation_type='PENDING APPROVAL'
-			
-			-- Update FilePath in the temporary table
-			UPDATE al SET FilePath = qf.FilePath FROM #approval_list al
-			INNER JOIN QMS_FileVersionInfo qf ON qf.fileid = al.DocID AND qf.version = al.Version AND qf.active_status = 1;
+	DELETE from INF_LIB_Nav_Modules where Name = ''Document Viewer''
+	IF not exists (SELECT * from INF_LIB_Nav_Modules where Name = ''Document Viewer'')
+		BEGIN
+        INSERT INTO INF_LIB_Nav_Modules (Module_ID, Project_ID, Screen_ID, Name, Image_Path, Default_Module, Created_By, Date_Of_Creation,Active_Status, Display_Order)
+        VALUES((SELECT isnull(Max(Module_ID),0)+1 from INF_LIB_Nav_Modules), (SELECT Project_ID from INF_LIB_Nav_Projects WHERE Name = ''QHSE''),  0
+        ,''Document Viewer'', NULL,0,1,GETDATE(),1,NULL)
+	END
+	
+	DELETE from INF_LIB_Screens where Screen_Name = ''Document Viewer''
+	IF not exists (SELECT * from INF_LIB_Screens where Screen_Name = ''Document Viewer'')
+		BEGIN
+        insert into INF_LIB_Screens (Screen_ID, Module_ID, Screen_Name, Class_Name, Assembly_Name, Screen_Type, Image_Path, Created_By, Date_Of_Creation, Active_Status)
+        values ((SELECT isnull(max(Screen_ID) , 0)+1  from INF_LIB_Screens ),(SELECT Module_ID from INF_LIB_Nav_Modules where name = ''Document Viewer''),
+        ''Document Viewer'',''J2Landing.J2LandingPage#/qms/document/4BA8E5B9FC1D5FE27386FEC9DD25D391'',''J2Landing'',2,NULL,1,GETDATE(),1)
+	END
 
-			Select * from #approval_list ORDER BY Operation_Date, [Version]
-END
+	IF exists (SELECT * from INF_LIB_Nav_Modules where Name = ''Document Viewer'')
+    BEGIN
+		update INF_LIB_Nav_Modules
+		set Screen_ID = (SELECT Screen_ID from INF_LIB_Screens where Screen_Name = ''Document Viewer'')
+		where Name = ''Document Viewer''
+    END
+
+	    IF Exists(SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N''[dbo].[INF_DTL_Vessel_Rank_Menu_Acess]'') AND type in (N''U''))
+       BEGIN
+		EXEC [inf].[utils_inf_backup_table] ''INF_DTL_Vessel_Rank_Menu_Acess''
+       END
+	
+	DECLARE @tempCrwRanksId table(CrId int)
+    DECLARE @maxMenuId int=0, @screenId int=0
+    INSERT INTO @tempCrwRanksId
+    SELECT ID from CRW_LIB_Crew_Ranks where Rank_Short_Name in(''MST'',''CPT'',''MSTR'',''C/O'',''C/OFF'',''C/E'',''2/E'',''C/OF'' , ''MST1'') and Active_Status=1
+    SELECT @screenId = Screen_ID FROM INF_LIB_Screens where Screen_Name=''Document Viewer''
+    DECLARE @RNO1 as INT=0, @RNOPre1 as INT=0,@UpdatedRankID INT=0
+    SELECT TOP 1 @RNO1=ROW_NUMBER() OVER(ORDER BY CrId ASC),@UpdatedRankID=CrId FROM @tempCrwRanksId
+        WHILE @RNO1 > 0
+    BEGIN
+    SELECT @maxMenuId= ISNULL(MAX(Menu_ID),0)+1 FROM INF_DTL_Vessel_Rank_Menu_Acess
+    IF NOT EXISTS(SELECT Menu_ID FROM INF_DTL_Vessel_Rank_Menu_Acess WHERE Rank_ID=@UpdatedRankID and Screen_ID=@screenId)
+      BEGIN
+          INSERT INTO  INF_DTL_Vessel_Rank_Menu_Acess (Menu_ID,Vessel_ID,Rank_ID,Screen_ID,Access_Menu,Access_View,Access_Add,Access_Edit,Access_Delete,Access_Approve,
+          Created_By,Date_Of_Creation,Modified_By,Date_Of_Modified,Deleted_By,Date_Of_Deleted,Active_Status) -- ,uid)
+          VALUES(@maxMenuId,0,@UpdatedRankID,@screenId,1,1,1,1,1,1,
+          1,GETDATE(),NULL,NULL,NULL,NULL,1) -- ,newid())
+      END
+    SET @RNOPre1 =@RNO1
+      SET @RNO1=0
+      SELECT  TOP 1  @RNO1=RNO , @UpdatedRankID=CrId
+      FROM (SELECT ROW_NUMBER() OVER(ORDER BY CrId ASC)as RNO,CrId FROM @tempCrwRanksId )tbl where tbl.RNO > @RNOPre1
+    END
+';
+DECLARE @vessel_id INT;
+EXEC [SYNC_SP_DataSynchronizer_DataLog] '', '', '', 0, @script;
