@@ -1,126 +1,82 @@
-CREATE OR ALTER PROCEDURE [dbo].[QMS_File_Keep_Assignment]     
-(
-    @FolderIDS UDTT_QMSAssignmnetFolderIDs READONLY,          
-    @VesselIDS UDTT_QMSAssignedVesselIDs READONLY,          
-    @UserID INT          
-)
-AS
-BEGIN          
-    BEGIN TRY   
-        -- Temporary table to store files to process
-        SELECT ID, ADID, HFID, NodeType, Version, VesselID 
-        INTO #FILES_TO_PROCESS 
-        FROM (
-            SELECT DISTINCT 
-                RANK() OVER (PARTITION BY F.ID, vid.vesselid ORDER BY VERSION DESC) AS RANK,
-                F.ID, 
-                A.DOCUMENT_ID AS ADID, 
-                H.FileID AS HFID,  
-                NodeType, 
-                Version, 
-                VID.VesselID
-            FROM QMSdtlsFile_Log F      
-            INNER JOIN @FolderIDS REQUESTED_FOLDER 
-                ON REQUESTED_FOLDER.FolderID = F.ParentID 
-                AND F.NodeType = 0   
-                AND F.active_status = 1         
-            FULL JOIN @VesselIDS VID 
-                ON F.active_status = 1      
-            LEFT OUTER JOIN QMS_Sync_History H 
-                ON H.FileID = F.ID 
-                AND H.VesselID = VID.VesselID 
-                AND H.Active_Status = 1      
-            LEFT OUTER JOIN QMS_DTL_Vessel_Assignment A 
-                ON A.Document_ID = F.ID 
-                AND A.Vessel_ID = VID.VesselID 
-                AND A.Active_Status = 1      
-            WHERE F.ID IS NOT NULL
-        ) FILES      
-        WHERE RANK = 1;
+/****** Object:  StoredProcedure [dbo].[QMS_Remove_Assignments]  Script Date: 06/03/2025 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
 
-        -- Merge into QMS_DTL_Vessel_Assignment (for files)
-        MERGE INTO QMS_DTL_Vessel_Assignment AS TARGET             
-        USING #FILES_TO_PROCESS AS SOURCE
-        ON TARGET.Document_ID = SOURCE.ID 
-           AND SOURCE.ID IS NOT NULL 
-           AND TARGET.FileVersion = SOURCE.Version
-           AND TARGET.Vessel_ID = SOURCE.VesselID 
-           AND TARGET.Active_Status = 1 
-        WHEN NOT MATCHED BY TARGET AND SOURCE.ID IS NOT NULL THEN            
-            INSERT (Document_ID, Vessel_ID, Created_By, Date_Of_Creation, Active_Status, FileVersion)            
-            VALUES (SOURCE.ID, SOURCE.VesselID, @UserID, GETDATE(), 1, SOURCE.Version);
+-- =============================================
+-- Author:		Muhammad Tariq 
+-- Create date: 06/03/2025
+-- Description:	
+-- =============================================
 
-        -- Merge into QMS_Sync_History (for files)
-        MERGE INTO QMS_Sync_History AS TARGET       
-        USING #FILES_TO_PROCESS AS SOURCE 
-        ON TARGET.FileID = SOURCE.ID 
-           AND TARGET.VesselID = SOURCE.VesselID 
-           AND TARGET.Active_Status = 1 
-           AND TARGET.FileVersion = SOURCE.Version 
-           AND SOURCE.Version IS NOT NULL
-        WHEN NOT MATCHED BY TARGET AND SOURCE.Version IS NOT NULL AND SOURCE.ID IS NOT NULL THEN       
-            INSERT (FileID, VesselID, FileVersion, Created_By, Date_Of_Creation, Active_Status)      
-            VALUES (SOURCE.ID, SOURCE.VesselID, SOURCE.Version, @UserID, GETDATE(), 1);
+CREATE OR ALTER PROCEDURE [dbo].[QMS_Remove_Assignments]      
+  (  
+  @FolderIDS UDTT_QMSAssignmnetFolderIDs readonly,      
+  @VesselIDS UDTT_QMSAssignedVesselIDs readonly,      
+  @UserID INT  
+  )      
+  AS   
+  BEGIN  
+  BEGIN TRY
 
-        -- Temporary table to store folders to process
-        SELECT ID, NodeType, Version, VesselID, ADID  
-        INTO #FOLDERS_TO_PROCESS 
-        FROM (
-            SELECT DISTINCT 
-                F.ID, 
-                NodeType, 
-                Version, 
-                VesselID, 
-                A.DOCUMENT_ID AS ADID 
-            FROM QMSdtlsFile_Log F      
-            INNER JOIN @FolderIDS REQUESTED_FOLDER 
-                ON REQUESTED_FOLDER.FolderID = F.ID      
-            FULL JOIN @VesselIDS VID 
-                ON F.active_status = 1      
-            LEFT OUTER JOIN QMS_DTL_Vessel_Assignment A 
-                ON A.Document_ID = F.ID 
-                AND A.Vessel_ID = VID.VesselID 
-                AND A.Active_Status = 1      
-        ) FOLDERS;
+  DECLARE @DocID INT, @VesselID INT;
+  DECLARE @SQL_UPDATE NVARCHAR(MAX);
 
-        -- Merge into QMS_DTL_Vessel_Assignment (for folders)
-        MERGE INTO QMS_DTL_Vessel_Assignment AS TARGET       
-        USING #FOLDERS_TO_PROCESS AS SOURCE
-        ON TARGET.Document_ID = SOURCE.ADID 
-           AND TARGET.Vessel_ID = SOURCE.VesselID 
-           AND TARGET.Active_Status = 1       
-        WHEN NOT MATCHED BY TARGET AND SOURCE.ID IS NOT NULL THEN            
-            INSERT (Document_ID, Vessel_ID, Created_By, Date_Of_Creation, Active_Status, FileVersion)            
-            VALUES (SOURCE.ID, SOURCE.VesselID, @UserID, GETDATE(), 1, 0);
+  DECLARE @FileVesselInfo TABLE (DocId INT, VesselID INT);
 
-        -- Clean up temporary tables
-        DROP TABLE #FILES_TO_PROCESS;
-        DROP TABLE #FOLDERS_TO_PROCESS;
+    -- populated data to deactivate records from vessel 
+    INSERT INTO @FileVesselInfo (DocId, VesselID)
+    SELECT fl.ID, va.Vessel_ID
+    FROM QMSdtlsFile_Log fl with (nolock)
+    INNER JOIN QMS_DTL_Vessel_Assignment va WITH (NOLOCK) ON fl.ID = va.Document_ID
+    INNER JOIN @FolderIDS fi ON fi.FolderID = fl.ID OR (fi.FolderID = fl.ParentId AND fl.NodeType = 0)
+    WHERE fl.Active_Status = 1 AND va.Active_Status = 1 
+    AND fl.NodeType = 0 AND va.Vessel_ID IN (SELECT VesselID FROM @VesselIDS);
 
-        -- Return success code
-        RETURN 2;   
+    -- deactivate QMS_DTL_Vessel_Assignment for all records with unchecked VesselIDs.
+    UPDATE va
+    SET va.Active_Status = 0, va.Deleted_By = @UserID, va.Date_Of_Deletion = GETDATE()
+    FROM QMS_DTL_Vessel_Assignment va
+    INNER JOIN QMSdtlsFile_Log fl ON va.Document_ID = fl.Id
+    INNER JOIN @FolderIDS fi ON fi.FolderID = fl.ID OR (fi.FolderID = fl.ParentId AND fl.NodeType = 0)
+    WHERE va.Active_Status = 1 AND va.Vessel_ID IN (SELECT VesselID FROM @VesselIDS);
+
+    -- deactivate QMS_Sync_History for all records with unchecked VesselIDs.
+    UPDATE h
+    SET h.Active_Status = 0, h.Deleted_By = @UserID, h.Date_Of_Deletion = GETDATE()
+    FROM QMS_Sync_History h
+    INNER JOIN QMSdtlsFile_Log fl ON h.FileID = fl.ID
+    INNER JOIN @FolderIDS fi ON fi.FolderID = fl.ID OR (fi.FolderID = fl.ParentId AND fl.NodeType = 0)
+    WHERE h.Active_Status = 1 AND h.VesselID IN (SELECT VesselID FROM @VesselIDS);
+
+    -- Update QMSDTLSFILE_LOG for all deleted document's assignment
+    DECLARE doc_cursor CURSOR FOR
+    SELECT DocId, VesselID from @FileVesselInfo
+
+    OPEN doc_cursor;
+    FETCH NEXT FROM doc_cursor INTO @DocID, @VesselID;
+
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+
+        SET @SQL_UPDATE = 'UPDATE QMSDTLSFILE_LOG SET Active_Status = 0 WHERE ID = ' + CAST(@DocID AS NVARCHAR(100));
+        EXEC [SYNC_SP_DataSynchronizer_DataLog] '', '', '', @VesselID, @SQL_UPDATE;
+
+        SET @SQL_UPDATE = 'DELETE FROM qms.full_text_content WHERE document_id= '+ CAST(@DocID AS NVARCHAR(100));
+        EXEC [SYNC_SP_DataSynchronizer_DataLog] '', '', '', @VesselID, @SQL_UPDATE;
+
+        FETCH NEXT FROM doc_cursor INTO @DocID, @VesselID;
+    END;
+
+    CLOSE doc_cursor;
+    DEALLOCATE doc_cursor;
+    
+    return 1;
     END TRY  
-    BEGIN CATCH  
-        -- Error handling
-        DECLARE @ErrorMessage NVARCHAR(4000);      
-        DECLARE @ErrorSeverity INT;      
-        DECLARE @ErrorState INT; 
-        SELECT       
-            @ErrorMessage = ERROR_MESSAGE(),      
-            @ErrorSeverity = ERROR_SEVERITY(),      
-            @ErrorState = ERROR_STATE();  
 
-        -- Clean up temporary tables if they exist
-        IF (OBJECT_ID('tempdb..#FILES_TO_PROCESS') IS NOT NULL)
-        BEGIN
-            DROP TABLE #FILES_TO_PROCESS;
-        END
-        IF (OBJECT_ID('tempdb..#FOLDERS_TO_PROCESS') IS NOT NULL)
-        BEGIN
-            DROP TABLE #FOLDERS_TO_PROCESS;
-        END
-
-        -- Raise the error
-        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);  
-    END CATCH           
-END;
+	BEGIN CATCH    
+		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE()    
+		EXEC inf_log_write 'qms','syncing','QMS_Remove_Assignments', 1, 'QMS_Remove_Assignments', @ErrorMessage      
+	END CATCH
+END 
