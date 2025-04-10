@@ -2,7 +2,7 @@ CREATE OR ALTER PROCEDURE [qms].[SP_Get_QMS_Document_Tree]
 @UserId INT
 AS
 BEGIN
-    -- Step 1: Identify which IDs are parents (for hasChild)
+    -- Step 1: Identify parents for hasChild
     DROP TABLE IF EXISTS #Orphans;
     SELECT DISTINCT ParentID 
     INTO #Orphans 
@@ -11,49 +11,38 @@ BEGIN
 
     CREATE CLUSTERED INDEX CX_#Orphans ON #Orphans (ParentID);
 
-    -- Step 2: Build recursive hierarchy with folder names and levels
+    -- Step 2: Recursive CTE to build hierarchy and full path (skip root's logFileId)
     WITH FileHierarchy AS (
-        -- Root level (Level 0)
+        -- Level 0 (root) - we just use \ for root
         SELECT 
             ID,
             ParentID,
             logFileId,
-            CAST('' AS VARCHAR(MAX)) AS FilePath,
+            CAST('\ ' AS VARCHAR(MAX)) AS FilePath,  -- Root is just \ (skip logFileId)
             0 AS Level
         FROM QMSdtlsFile_Log_demo
         WHERE ParentID IS NULL
 
         UNION ALL
 
-        -- Recursive step
+        -- Children (skip root logFileId and append their own logFileId and \)
         SELECT 
             child.ID,
             child.ParentID,
             child.logFileId,
-            CAST(
-                CASE 
-                    WHEN parent.Level = 0 THEN '\'                          -- Level 1
-                    WHEN parent.Level = 1 THEN '\' + parent.logFileId + '\' -- Level 2
-                    ELSE parent.FilePath + parent.logFileId + '\'          -- Level 3+
-                END AS VARCHAR(MAX)
-            ) AS FilePath,
+            CAST(parent.FilePath + child.logFileId + '\' AS VARCHAR(MAX)) AS FilePath,
             parent.Level + 1 AS Level
         FROM QMSdtlsFile_Log_demo child
         INNER JOIN FileHierarchy parent ON child.ParentID = parent.ID
     )
 
-    -- Step 3: Final output
+    -- Step 3: Final Output
     SELECT TOP 100 
         va.date_of_Creatation AS dateCreated,
         va.date_of_Modification AS dateModified,
 
-        -- Final Path Logic
-        ISNULL(
-            CASE 
-                WHEN fh.Level = 0 THEN ''       -- Level 0
-                ELSE fh.FilePath               -- Level 1+
-            END, ''
-        ) AS filterPath,
+        -- Filter Path (skip root folder)
+        ISNULL(fh.FilePath, '') AS filterPath,
 
         CASE 
             WHEN o.ParentID IS NOT NULL THEN 1
@@ -81,8 +70,6 @@ BEGIN
     LEFT OUTER JOIN #Orphans o ON o.ParentID = va.ID
     LEFT JOIN FileHierarchy fh ON va.ID = fh.ID
     WHERE va.active_status = 1
-    ORDER BY va.logFileId;
-
-    -- Cleanup
-    DROP TABLE IF EXISTS #Orphans;
+    ORDER BY va.logFileId
+    OPTION (MAXRECURSION 200); -- Support deep hierarchies
 END
