@@ -1,16 +1,21 @@
- ALTER TABLE dbo.QMS_FileVersionInfo ADD ID_temp INT NULL;
+-- 1. Add temp column
+ALTER TABLE dbo.QMS_FileVersionInfo ADD ID_temp INT NULL;
 
-  UPDATE dbo.QMS_FileVersionInfo SET ID_temp = ID;
+-- 2. Copy old ID values
+UPDATE dbo.QMS_FileVersionInfo SET ID_temp = ID;
 
-  ALTER TABLE dbo.QMS_FileVersionInfo DROP CONSTRAINT PK_QMS_FileVersionInfo;
+-- 3. Drop old PK constraint
+ALTER TABLE dbo.QMS_FileVersionInfo DROP CONSTRAINT PK_QMS_FileVersionInfo;
 
-  ALTER TABLE dbo.QMS_FileVersionInfo DROP COLUMN ID;
+-- 4. Drop old ID column
+ALTER TABLE dbo.QMS_FileVersionInfo DROP COLUMN ID;
 
-  EXEC sp_rename 'dbo.QMS_FileVersionInfo.ID_temp', 'ID', 'COLUMN';
+-- 5. Rename ID_temp to ID
+EXEC sp_rename 'dbo.QMS_FileVersionInfo.ID_temp', 'ID', 'COLUMN';
 
-  ALTER TABLE dbo.QMS_FileVersionInfo ADD CONSTRAINT PK_QMS_FileVersionInfo PRIMARY KEY CLUSTERED (ID ASC) WITH (FILLFACTOR = 80);
+-- 6. Make new ID column NOT NULL
+ALTER TABLE dbo.QMS_FileVersionInfo ALTER COLUMN ID INT NOT NULL;
 
-Msg 8111, Level 16, State 1, Line 17
-Cannot define PRIMARY KEY constraint on nullable column in table 'QMS_FileVersionInfo'.
-Msg 1750, Level 16, State 0, Line 17
-Could not create constraint or index. See previous errors.
+-- 7. Add Primary Key again
+ALTER TABLE dbo.QMS_FileVersionInfo 
+ADD CONSTRAINT PK_QMS_FileVersionInfo PRIMARY KEY CLUSTERED (ID ASC) WITH (FILLFACTOR = 80);
