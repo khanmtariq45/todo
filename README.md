@@ -1,53 +1,60 @@
-CREATE TABLE [dbo].[QMS_FileVersionInfo] (
-    [ID]                   INT           IDENTITY (1, 1) NOT NULL,
-    [FileID]               INT           NULL,
-    [Version]              INT           NULL,
-    [FilePath]             VARCHAR (MAX) NULL,
-    [Created_By]           INT           NOT NULL,
-    [Date_Of_Creatation]   DATETIME      NOT NULL,
-    [Modified_By]          INT           NULL,
-    [Date_Of_Modification] DATETIME      NULL,
-    [Deleted_By]           INT           NULL,
-    [Date_Of_Deletion]     DATETIME      NULL,
-    [Active_Status]        BIT           CONSTRAINT [DF_QMS_FileVersionInfo_Active_Status] DEFAULT ((1)) NOT NULL,
-    [Is_Indexed]           BIT           DEFAULT ((0)) NOT NULL,
-    [indexing_last_retry_time] DATETIME      NULL,
-    CONSTRAINT [PK_QMS_FileVersionInfo] PRIMARY KEY CLUSTERED ([ID] ASC) WITH (FILLFACTOR = 80)
-);
-
-CREATE NONCLUSTERED INDEX IX_QMS_FILEVERSIONINFO__IS_INDEXED_FILEID_VERSION ON QMS_FILEVERSIONINFO(is_indexed, fileId, version);
-
-
-
 import { MigrationUtilsService, eApplicationLocation } from "j2utils";
 import { MigrationInterface, QueryRunner } from "typeorm";
 
-export class V3252132QmsCreateAlterSPGetQMSDocumentTreeSlashFix1745241336056 implements MigrationInterface {
+export class V3252133_RemoveIdentityFromQMSFileVersionInfo1680000000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     const className = this.constructor.name;
     try {
       let application = await MigrationUtilsService.getApplicationLocation();
       if (application === eApplicationLocation.Vessel) {
-        await queryRunner.query(`CREATE OR ALTER PROCEDURE [qms].[SP_Get_QMS_Document_Tree] 
-@UserId INT
-AS
-BEGIN
-BEGIN TRY
-    -- Step 1: Identify parents for hasChild
-    DROP TABLE IF EXISTS #Orphans;
-    SELECT DISTINCT ParentID 
-    INTO #Orphans 
-    FROM QMSdtlsFile_Log 
-    WHERE active_status = 0;
+        await queryRunner.startTransaction();
+        try {
+          // Step 1: Drop foreign key constraints if any (you must handle manually if referenced)
+          
+          // Step 2: Create a new column without identity
+          await queryRunner.query(`
+            ALTER TABLE dbo.QMS_FileVersionInfo ADD ID_temp INT NULL;
+          `);
 
-   `);
+          // Step 3: Copy the ID values
+          await queryRunner.query(`
+            UPDATE dbo.QMS_FileVersionInfo SET ID_temp = ID;
+          `);
+
+          // Step 4: Drop the primary key constraint
+          await queryRunner.query(`
+            ALTER TABLE dbo.QMS_FileVersionInfo DROP CONSTRAINT PK_QMS_FileVersionInfo;
+          `);
+
+          // Step 5: Drop the old ID column
+          await queryRunner.query(`
+            ALTER TABLE dbo.QMS_FileVersionInfo DROP COLUMN ID;
+          `);
+
+          // Step 6: Rename the new column to ID
+          await queryRunner.query(`
+            EXEC sp_rename 'dbo.QMS_FileVersionInfo.ID_temp', 'ID', 'COLUMN';
+          `);
+
+          // Step 7: Recreate the primary key
+          await queryRunner.query(`
+            ALTER TABLE dbo.QMS_FileVersionInfo ADD CONSTRAINT PK_QMS_FileVersionInfo PRIMARY KEY CLUSTERED (ID ASC) WITH (FILLFACTOR = 80);
+          `);
+
+          await queryRunner.commitTransaction();
+        } catch (innerError) {
+          await queryRunner.rollbackTransaction();
+          throw innerError;
+        }
       }
 
-      await MigrationUtilsService.migrationLog(className, "", "S", "qms", "SP_Get_QMS_Document_Tree_Index");
+      await MigrationUtilsService.migrationLog(className, "", "S", "qms", "RemoveIdentityFromQMSFileVersionInfo");
     } catch (error) {
-      await MigrationUtilsService.migrationLog(className, error, "E", "qms", "SP_Get_QMS_Document_Tree_Index", true);
+      await MigrationUtilsService.migrationLog(className, error, "E", "qms", "RemoveIdentityFromQMSFileVersionInfo", true);
     }
   }
 
-  public async down(queryRunner: QueryRunner): Promise<void> {}
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    // Usually, reverting this kind of change is very complex, so down migration can be left empty
+  }
 }
