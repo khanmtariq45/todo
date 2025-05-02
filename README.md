@@ -3,7 +3,7 @@ import base64
 import re
 from bs4 import BeautifulSoup
 from urllib.parse import unquote
-import imghdr
+from PIL import Image
 
 # Terminal color codes
 GREEN = "\033[92m"
@@ -13,24 +13,14 @@ BLUE = "\033[94m"
 RESET = "\033[0m"
 
 def get_image_mime_type(image_path):
-    """Get proper MIME type by checking image content"""
     try:
-        with open(image_path, "rb") as f:
-            header = f.read(32)  # Read first 32 bytes to determine type
-            img_type = imghdr.what(None, header)
-            if img_type == "jpeg":
-                return "jpeg"
-            elif img_type == "png":
-                return "png"
-            elif img_type == "gif":
-                return "gif"
-            elif img_type == "bmp":
-                return "bmp"
-            elif img_type == "tiff":
-                return "tiff"
-    except:
-        pass
-    return "png"  # default fallback
+        with Image.open(image_path) as img:
+            format = img.format.lower()
+            if format in ["jpeg", "png", "gif", "bmp", "tiff"]:
+                return format
+    except Exception as e:
+        print(f"{YELLOW}MIME detection error ({image_path}): {str(e)}{RESET}")
+    return "png"
 
 def convert_image_to_base64(image_path):
     """Convert image to base64 with proper MIME type detection"""
@@ -117,8 +107,10 @@ def process_html_file(file_path):
         print(f"{GREEN}Successfully processed: {file_path}{RESET}")
         if replacements:
             print(f"{BLUE}Converted {len(replacements)} images to base64{RESET}")
-        for img_src in image_errors:
-            print(f"{YELLOW}Missing image: {img_src}{RESET}")
+        if image_errors:
+            print(f"{RED}Missing images in file: {file_path}{RESET}")
+            for img_src in image_errors:
+                print(f"{YELLOW} - {img_src}{RESET}")
     except Exception as e:
         print(f"{RED}Error saving {file_path}: {str(e)}{RESET}")
 
