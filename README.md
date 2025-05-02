@@ -1,9 +1,9 @@
 import os
 import base64
+import re
 from bs4 import BeautifulSoup
 from urllib.parse import unquote
 
-# Terminal color codes
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
@@ -14,16 +14,16 @@ def convert_image_to_base64(image_path):
         if not os.path.exists(image_path):
             return None
         with open(image_path, "rb") as img_file:
-            return base64.b64encode(img_file.read()).decode('utf-8')
+            return base64.b64encode(img_file.read()).decode("utf-8")
     except:
         return None
 
 def try_open_html(file_path):
-    encodings = ['utf-8', 'cp1252', 'latin-1']
+    encodings = ["utf-8", "cp1252", "latin-1"]
     for enc in encodings:
         try:
-            with open(file_path, 'r', encoding=enc) as f:
-                return f.read()
+            with open(file_path, "r", encoding=enc) as f:
+                return f.read(), enc
         except:
             continue
     raise UnicodeDecodeError("Encoding failed")
@@ -31,33 +31,42 @@ def try_open_html(file_path):
 def process_html_file(file_path):
     print(f"{GREEN}Processing: {file_path}{RESET}")
     try:
-        content = try_open_html(file_path)
-        soup = BeautifulSoup(content, "html.parser")
+        html_content, encoding = try_open_html(file_path)
     except Exception:
         print(f"{RED}Error reading: {file_path} (please check manually){RESET}")
         return
 
+    soup = BeautifulSoup(html_content, "html.parser")
     image_errors = []
+    replacements = []
 
     for img in soup.find_all("img"):
         src = img.get("src")
-        if src and not src.startswith(('http://', 'https://', 'data:')):
+        if src and not src.startswith(("http://", "https://", "data:")):
             decoded_src = unquote(src)
             image_path = os.path.normpath(os.path.join(os.path.dirname(file_path), decoded_src))
             base64_image = convert_image_to_base64(image_path)
             if base64_image:
-                ext = os.path.splitext(decoded_src)[1][1:] or 'png'
-                img['src'] = f"data:image/{ext};base64,{base64_image}"
+                ext = os.path.splitext(decoded_src)[1][1:] or "png"
+                base64_src = f"data:image/{ext};base64,{base64_image}"
+                # Store replacement: original src to new src
+                replacements.append((src, base64_src))
             else:
                 image_errors.append(decoded_src)
 
+    # Replace only the src attributes in the original HTML text
+    for original_src, new_src in replacements:
+        # Replace src="original_src" with src="base64_src"
+        pattern = re.compile(r'(src\s*=\s*[\'"])' + re.escape(original_src) + r'([\'"])', flags=re.IGNORECASE)
+        html_content = pattern.sub(r'\1' + new_src + r'\2', html_content)
+
     try:
-        with open(file_path, "w", encoding='utf-8') as file:
-            file.write(str(soup))
+        with open(file_path, "w", encoding=encoding) as f:
+            f.write(html_content)
         print(f"{GREEN}Done: {file_path}{RESET}")
         for img_src in image_errors:
             print(f"{YELLOW}Image issue in {file_path} -> {img_src}{RESET}")
-    except:
+    except Exception:
         print(f"{RED}Error saving: {file_path} (please check manually){RESET}")
 
 def traverse_directory(base_directory):
@@ -66,7 +75,7 @@ def traverse_directory(base_directory):
 
     for root, _, files in os.walk(base_directory):
         for file in files:
-            if file.lower().endswith(('.html', '.htm')):
+            if file.lower().endswith((".html", ".htm")):
                 found_html = True
                 file_path = os.path.join(root, file)
                 process_html_file(file_path)
