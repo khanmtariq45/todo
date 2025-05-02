@@ -1,6 +1,7 @@
 import os
 import base64
 from bs4 import BeautifulSoup
+from urllib.parse import unquote
 
 def convert_image_to_base64(image_path):
     try:
@@ -40,15 +41,21 @@ def process_html_file(file_path):
     for img in images:
         src = img.get("src")
         if src and not src.startswith(('http://', 'https://', 'data:')):
-            image_path = os.path.join(os.path.dirname(file_path), src)
+            decoded_src = unquote(src)  # Handle %20 and other URL encoding
+            image_path = os.path.normpath(os.path.join(os.path.dirname(file_path), decoded_src))
+
             print(f"  Found image: {src}")
+            if not os.path.isfile(image_path):
+                print(f"  -> File not found: {image_path}")
+                continue
+
             base64_image = convert_image_to_base64(image_path)
             if base64_image:
-                ext = os.path.splitext(src)[1][1:] or 'png'
+                ext = os.path.splitext(decoded_src)[1][1:] or 'png'
                 img['src'] = f"data:image/{ext};base64,{base64_image}"
                 print(f"  -> Replaced with Base64.")
             else:
-                print(f"  -> Skipped (image missing or unreadable).")
+                print(f"  -> Skipped (image unreadable).")
 
     try:
         with open(file_path, "w", encoding='utf-8') as file:
