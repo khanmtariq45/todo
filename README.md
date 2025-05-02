@@ -14,6 +14,7 @@ def convert_image_to_base64(image_path):
         return None
 
 def process_html_file(file_path):
+    print(f"Processing file: {file_path}")
     with open(file_path, "r", encoding='utf-8') as file:
         soup = BeautifulSoup(file, "html.parser")
 
@@ -22,14 +23,17 @@ def process_html_file(file_path):
         src = img.get("src")
         if src and not src.startswith(('http://', 'https://')):
             image_path = os.path.join(os.path.dirname(file_path), src)
+            print(f"Found image: {src}")
             base64_image = convert_image_to_base64(image_path)
             if base64_image:
                 img['src'] = f"data:image/{os.path.splitext(src)[1][1:]};base64,{base64_image}"
+                print(f"Replaced image {src} with Base64 in {file_path}")
             else:
                 print(f"Skipping image {src} in {file_path} due to missing or unreadable image file.")
-
+    
     with open(file_path, "w", encoding='utf-8') as file:
         file.write(str(soup))
+    print(f"Finished processing file: {file_path}\n")
 
 def traverse_directory(base_directory):
     for root, dirs, files in os.walk(base_directory):
