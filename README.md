@@ -4,6 +4,9 @@ from bs4 import BeautifulSoup
 
 def convert_image_to_base64(image_path):
     try:
+        if not os.path.exists(image_path):
+            print(f"Image not found: {image_path}")
+            return None
         with open(image_path, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode('utf-8')
     except Exception as e:
@@ -22,6 +25,8 @@ def process_html_file(file_path):
             base64_image = convert_image_to_base64(image_path)
             if base64_image:
                 img['src'] = f"data:image/{os.path.splitext(src)[1][1:]};base64,{base64_image}"
+            else:
+                print(f"Skipping image {src} in {file_path} due to missing or unreadable image file.")
 
     with open(file_path, "w", encoding='utf-8') as file:
         file.write(str(soup))
