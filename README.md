@@ -23,11 +23,9 @@ def get_image_mime_type(image_path):
     return "png"
 
 def convert_image_to_base64(image_path):
-    """Convert image to base64 with proper MIME type detection"""
     try:
         if not os.path.exists(image_path):
             return None, None
-        
         mime_type = get_image_mime_type(image_path)
         with open(image_path, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode("utf-8"), mime_type
@@ -36,21 +34,25 @@ def convert_image_to_base64(image_path):
         return None, None
 
 def try_open_html(file_path):
-    """Try multiple encodings to read HTML file"""
     encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
     for enc in encodings:
         try:
             with open(file_path, "r", encoding=enc) as f:
                 content = f.read()
-                # Remove any trailing whitespace or dots immediately
-                content = content.rstrip(' .\t\n\r')
                 return content, enc
         except UnicodeDecodeError:
             continue
     raise UnicodeDecodeError(f"Could not decode {file_path} with tried encodings")
 
+def remove_trailing_dots(soup):
+    # Remove tags like <p>.</p> or <div>.</div> at the end
+    for tag in reversed(soup.find_all(['p', 'div'])):
+        if tag.text.strip() == ".":
+            tag.decompose()
+        else:
+            break
+
 def process_html_file(file_path):
-    """Process a single HTML file to convert images to base64"""
     print(f"{GREEN}Processing: {file_path}{RESET}")
     try:
         html_content, encoding = try_open_html(file_path)
@@ -82,7 +84,7 @@ def process_html_file(file_path):
         else:
             image_errors.append(decoded_src)
 
-    # Make replacements in the original HTML content
+    html_content = str(soup)
     for pattern, replacement in replacements:
         html_content = re.sub(
             rf'(<img[^>]*src\s*=\s*["\']){pattern}(["\'][^>]*>)',
@@ -91,17 +93,20 @@ def process_html_file(file_path):
             flags=re.IGNORECASE
         )
 
-    # Additional Word compatibility fixes
-    html_content = html_content.replace("<o:p></o:p>", "")
-    html_content = re.sub(r'<!--(\[if.*?\]>|<!\[endif\])-->', '', html_content, flags=re.DOTALL)
-    
-    # Ensure clean ending - remove any trailing dots or whitespace
-    html_content = html_content.rstrip(' .\t\n\r')
+    # Cleanup Word-specific tags and comments
+    html_content = re.sub(r"<o:p>(\.?)</o:p>", r"\1", html_content)
+    html_content = re.sub(r'<!--(if.*?>|<!endif)-->', '', html_content, flags=re.DOTALL)
+
+    # Parse again to clean up ending dot paragraphs
+    soup = BeautifulSoup(html_content, "html.parser")
+    remove_trailing_dots(soup)
+
+    # Final cleanup of trailing whitespace and dots
+    html_content = str(soup).rstrip(' .\t\n\r')
 
     try:
         with open(file_path, "w", encoding=encoding, newline='') as f:
             f.write(html_content)
-            # Explicitly end with newline for clean file ending
             f.write('\n')
         
         print(f"{GREEN}Successfully processed: {file_path}{RESET}")
@@ -115,7 +120,6 @@ def process_html_file(file_path):
         print(f"{RED}Error saving {file_path}: {str(e)}{RESET}")
 
 def traverse_directory(base_directory):
-    """Recursively process all HTML files in directory"""
     base_directory = base_directory.strip().strip('"')
     if not os.path.isdir(base_directory):
         print(f"{RED}Error: Directory not found - {base_directory}{RESET}")
