@@ -37,7 +37,7 @@ def process_html_file(file_path):
         print(f"{RED}Error reading: {file_path} (please check manually){RESET}")
         return
 
-    had_image_error = False
+    image_errors = []
 
     for img in soup.find_all("img"):
         src = img.get("src")
@@ -49,14 +49,14 @@ def process_html_file(file_path):
                 ext = os.path.splitext(decoded_src)[1][1:] or 'png'
                 img['src'] = f"data:image/{ext};base64,{base64_image}"
             else:
-                had_image_error = True
+                image_errors.append(decoded_src)
 
     try:
         with open(file_path, "w", encoding='utf-8') as file:
             file.write(str(soup))
         print(f"{GREEN}Done: {file_path}{RESET}")
-        if had_image_error:
-            print(f"{YELLOW}Some images could not be read in: {file_path} (please check manually){RESET}")
+        for img_src in image_errors:
+            print(f"{YELLOW}Image issue in {file_path} -> {img_src}{RESET}")
     except:
         print(f"{RED}Error saving: {file_path} (please check manually){RESET}")
 
