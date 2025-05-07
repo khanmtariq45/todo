@@ -1,44 +1,48 @@
 import os
+import sys
 from docx import Document
 import win32com.client
 from datetime import datetime
 
 def extract_links_from_docx(path):
-    links = []
+    links_with_lines = []
     try:
         doc = Document(path)
-        rels = doc.part._rels
-        for rel in rels.values():
-            if "hyperlink" in rel.reltype:
-                links.append(rel.target_ref)
+        for i, para in enumerate(doc.paragraphs, 1):
+            for rel in doc.part._rels.values():
+                if "hyperlink" in rel.reltype and rel.target_ref in para.text:
+                    links_with_lines.append((rel.target_ref, i))
     except Exception as e:
-        print(f"[DOCX Error] {path}: {e}")
-    return links
+        raise Exception(f"DOCX parse error: {e}")
+    return links_with_lines
 
 def extract_links_from_doc(path):
-    links = []
+    links_with_lines = []
     try:
         word = win32com.client.Dispatch("Word.Application")
-        word.Visible = False
         doc = word.Documents.Open(path, ReadOnly=True)
 
-        for h in doc.Hyperlinks:
-            links.append(h.Address)
+        for i, para in enumerate(doc.Paragraphs, 1):
+            text = para.Range.Text
+            for h in doc.Hyperlinks:
+                if h.Address and h.Address in text:
+                    links_with_lines.append((h.Address, i))
 
         doc.Close(False)
         word.Quit()
     except Exception as e:
-        print(f"[DOC Error] {path}: {e}")
-    return links
+        raise Exception(f"DOC parse error: {e}")
+    return links_with_lines
 
 def find_all_links(base_path):
     file_links = {}
-    total = 0
+    error_files = []
+    total_links = 0
     file_count = 0
 
     print(f"\nScanning Word files in: {base_path}\n")
 
-    for root, dirs, files in os.walk(base_path):
+    for root, _, files in os.walk(base_path):
         for file in files:
             full_path = os.path.join(root, file)
             ext = file.lower().split('.')[-1]
@@ -49,25 +53,29 @@ def find_all_links(base_path):
             file_count += 1
             print(f"[{file_count}] Processing: {full_path}")
 
-            if ext == "docx":
-                links = extract_links_from_docx(full_path)
-            else:
-                links = extract_links_from_doc(full_path)
+            try:
+                if ext == "docx":
+                    links = extract_links_from_docx(full_path)
+                else:
+                    links = extract_links_from_doc(full_path)
 
-            if links:
-                file_links[full_path] = links
-                total += len(links)
+                if links:
+                    file_links[full_path] = links
+                    total_links += len(links)
 
-    print(f"\nDone. Total files scanned: {file_count}")
-    return file_links, total
+            except Exception as e:
+                print(f"[ERROR] {full_path}: {e}")
+                error_files.append((full_path, str(e)))
 
-def generate_html_log(file_links, total, output_path):
+    return file_links, error_files, total_links
+
+def generate_html_log(file_links, error_files, total, output_path):
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     html = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Word File Link Report</title>
+    <title>Word Link Report</title>
     <style>
         body {{
             font-family: 'Segoe UI', sans-serif;
@@ -83,7 +91,13 @@ def generate_html_log(file_links, total, output_path):
             padding: 15px;
             border-left: 5px solid #31708f;
             margin-bottom: 25px;
-            font-size: 1.3em;
+            font-size: 1.2em;
+        }}
+        .error {{
+            background-color: #f2dede;
+            padding: 10px;
+            border-left: 5px solid #a94442;
+            margin-bottom: 20px;
         }}
         .file {{
             background-color: #fff;
@@ -125,12 +139,18 @@ def generate_html_log(file_links, total, output_path):
     </div>
 """
 
+    if error_files:
+        html += '<div class="error"><strong>Files with Errors (manual check needed):</strong><ul>'
+        for file, msg in error_files:
+            html += f"<li>{file} - <em>{msg}</em></li>"
+        html += '</ul></div>'
+
     for file, links in file_links.items():
         html += f'<div class="file">'
-        html += f'<div class="path">{file}</div>'
+        html += f'<div class="path">File: {file}</div>'
         html += f'<div class="count">Links: {len(links)}</div>'
-        for link in links:
-            html += f'<a href="{link}" target="_blank">{link}</a>'
+        for link, line in links:
+            html += f'<a href="{link}" target="_blank">Line {line}: {link}</a>'
         html += '</div>'
 
     html += f'<div class="footer">End of Report</div>'
@@ -139,11 +159,18 @@ def generate_html_log(file_links, total, output_path):
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html)
 
-    print(f"\nReport saved as: {output_path}")
+    print(f"\nHTML report saved at: {output_path}")
 
-# === Run Script ===
-base_path = r"C:\Your\WordFiles\Folder"  # Change this path
-output_html = "word_links_report.html"
+# === MAIN EXECUTION ===
+if __name__ == "__main__":
+    try:
+        base_path = input("Enter the base folder path: ").strip()
+        if not os.path.exists(base_path):
+            print("Invalid path. Exiting.")
+            sys.exit(1)
 
-results, total_count = find_all_links(base_path)
-generate_html_log(results, total_count, output_html)
+        output_html = "word_links_report.html"
+        links, errors, total_count = find_all_links(base_path)
+        generate_html_log(links, errors, total_count, output_html)
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
