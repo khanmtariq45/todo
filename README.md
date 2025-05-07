@@ -34,23 +34,31 @@ def extract_links_from_doc(path):
 def find_all_links(base_path):
     file_links = {}
     total = 0
+    file_count = 0
+
+    print(f"\nScanning Word files in: {base_path}\n")
 
     for root, dirs, files in os.walk(base_path):
         for file in files:
             full_path = os.path.join(root, file)
             ext = file.lower().split('.')[-1]
 
+            if ext not in ["doc", "docx"]:
+                continue
+
+            file_count += 1
+            print(f"[{file_count}] Processing: {full_path}")
+
             if ext == "docx":
                 links = extract_links_from_docx(full_path)
-            elif ext == "doc":
+            else:  # .doc
                 links = extract_links_from_doc(full_path)
-            else:
-                continue
 
             if links:
                 file_links[full_path] = links
                 total += len(links)
 
+    print(f"\nDone. Total files scanned: {file_count}")
     return file_links, total
 
 def generate_html_log(file_links, total, output_path):
@@ -64,7 +72,7 @@ def generate_html_log(file_links, total, output_path):
         body {{ font-family: Arial, sans-serif; background: #f9f9f9; color: #333; }}
         h1 {{ color: #2c3e50; }}
         .file-block {{ margin-bottom: 20px; padding: 10px; border-left: 5px solid #2980b9; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-        .file-path {{ font-weight: bold; color: #2980b9; }}
+        .file-path {{ font-weight: bold; color: #2980b9; word-break: break-all; }}
         .link-count {{ color: #27ae60; }}
         .link {{ display: block; margin-left: 10px; color: #2980b9; text-decoration: none; }}
         .link:hover {{ text-decoration: underline; }}
@@ -89,10 +97,11 @@ def generate_html_log(file_links, total, output_path):
 
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html)
-    print(f"\nLog saved to: {output_path}")
+
+    print(f"\nHTML log saved to: {output_path}")
 
 # === Run Script ===
-base_path = r"C:\Your\WordFiles\Folder"  # <-- Change this
+base_path = r"C:\Your\WordFiles\Folder"  # <--- Change to your base folder
 output_html = "link_report.html"
 
 results, total_count = find_all_links(base_path)
