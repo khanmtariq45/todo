@@ -5,15 +5,36 @@ from datetime import datetime
 from docx import Document
 from win32com import client
 
-URL_REGEX = re.compile(r'(https?://[^\s,;]+|www\.[^\s,;]+|mailto:[^\s,;]+|\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', re.IGNORECASE)
+# Enhanced URL regex pattern to capture more variations
+URL_REGEX = re.compile(
+    r'('
+    r'https?://[^\s<>"\'{}|\\^`[\]]+'  # Standard http/https URLs
+    r'|www\.[^\s<>"\'{}|\\^`[\]]+'     # www. URLs without protocol
+    r'|ftp://[^\s<>"\'{}|\\^`[\]]+'    # FTP URLs
+    r'|mailto:[^\s<>"\'{}|\\^`[\]]+'   # mailto links
+    r'|\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b'  # Email addresses
+    r'|\\\\[^\s<>"\'{}|\\^`[\]]+'      # Network paths (\\server\path)
+    r'|file://[^\s<>"\'{}|\\^`[\]]+'   # file:// URLs
+    r')',
+    re.IGNORECASE
+)
 
 def extract_text_and_links_from_paragraph(paragraph, line_offset=0):
     links = []
     text = paragraph.text.strip()
     if text:
+        # First check for hyperlinks in the paragraph
+        for hyperlink in paragraph.hyperlinks:
+            if hyperlink.address:
+                links.append((hyperlink.address, line_offset, "Hyperlink"))
+        
+        # Then check for URL-like text that might not be hyperlinked
         matches = URL_REGEX.findall(text)
         for url in matches:
-            links.append((url, line_offset))
+            # Skip if this URL was already found as a hyperlink
+            if not any(url in found_url for found_url, _, _ in links):
+                links.append((url, line_offset, "Text"))
+    
     return links
 
 def extract_links_from_docx(path):
@@ -40,6 +61,13 @@ def extract_links_from_docx(path):
             for part in (section.header, section.footer):
                 for para in part.paragraphs:
                     links.extend(extract_text_and_links_from_paragraph(para, -1))
+                    
+        # Footnotes and endnotes (if present)
+        if hasattr(doc, 'footnotes'):
+            for footnote in doc.footnotes:
+                for para in footnote.paragraphs:
+                    links.extend(extract_text_and_links_from_paragraph(para, -1))
+                    
     except Exception as e:
         raise Exception(f"DOCX error: {e}")
     return links
@@ -51,19 +79,38 @@ def extract_links_from_doc(path):
         word.Visible = False
         doc = word.Documents.Open(path, ReadOnly=True)
 
+        # Process main document content
         for i, para in enumerate(doc.Paragraphs, 1):
             text = para.Range.Text.strip()
-            matches = URL_REGEX.findall(text)
-            for url in matches:
-                links.append((url, i))
+            if text:
+                # Check hyperlinks first
+                for hyperlink in para.Range.Hyperlinks:
+                    if hyperlink.Address:
+                        links.append((hyperlink.Address, i, "Hyperlink"))
+                
+                # Then check for URL-like text
+                matches = URL_REGEX.findall(text)
+                for url in matches:
+                    if not any(url in found_url for found_url, _, _ in links):
+                        links.append((url, i, "Text"))
 
         # Headers and footers
         for section in doc.Sections:
             for hf in [section.Headers(1), section.Footers(1)]:
                 text = hf.Range.Text.strip()
-                matches = URL_REGEX.findall(text)
-                for url in matches:
-                    links.append((url, -1))
+                if text:
+                    for hyperlink in hf.Range.Hyperlinks:
+                        if hyperlink.Address:
+                            links.append((hyperlink.Address, -1, "Hyperlink"))
+                    matches = URL_REGEX.findall(text)
+                    for url in matches:
+                        if not any(url in found_url for found_url, _, _ in links):
+                            links.append((url, -1, "Text"))
+
+        # Process shapes (which might contain hyperlinks)
+        for shape in doc.InlineShapes:
+            if hasattr(shape, 'Hyperlink') and shape.Hyperlink.Address:
+                links.append((shape.Hyperlink.Address, -1, "Shape Hyperlink"))
 
         doc.Close(False)
         word.Quit()
@@ -120,12 +167,18 @@ def generate_html_log(file_links, error_files, total, output_path):
         .footer {{ margin-top: 40px; font-size: 0.9em; color: #999; }}
         a {{ color: #2980b9; text-decoration: none; }}
         a:hover {{ text-decoration: underline; }}
+        .link-type {{ font-size: 0.8em; color: #666; }}
+        .link-type.hyperlink {{ color: #27ae60; }}
+        .link-type.text {{ color: #e67e22; }}
+        .link-type.shape {{ color: #9b59b6; }}
     </style>
 </head>
 <body>
     <h1>Word Files Hyperlink Report</h1>
     <div class="summary">
         <strong>Total Links Found:</strong> {total}<br>
+        <strong>Files Processed:</strong> {len(file_links)}<br>
+        <strong>Files with Errors:</strong> {len(error_files)}<br>
         <strong>Generated At:</strong> {timestamp}
     </div>
 """
@@ -138,9 +191,13 @@ def generate_html_log(file_links, error_files, total, output_path):
 
     for file, links in file_links.items():
         html += f'<div class="file"><strong>{file}</strong><br><ul>'
-        for link, line in links:
-            where = "Header/Footer" if line == -1 else f"Line {line}"
-            html += f"<li>{where}: <a href='{link}' target='_blank'>{link}</a></li>"
+        for link, line, link_type in links:
+            where = "Header/Footer/Shape" if line == -1 else f"Line {line}"
+            type_class = link_type.lower().replace(" ", "-")
+            html += (
+                f"<li>{where}: <a href='{link}' target='_blank'>{link}</a> "
+                f"<span class='link-type {type_class}'>({link_type})</span></li>"
+            )
         html += "</ul></div>"
 
     html += '<div class="footer">End of Report</div></body></html>'
