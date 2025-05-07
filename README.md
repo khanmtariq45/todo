@@ -1,3 +1,1 @@
-      www.epshipping.co.uk
-      fpd@epshipping.co.uk
-      operations@epshipping.co.uk
+URL_REGEX = re.compile(r'(https?://[^\s,;]+|www\.[^\s,;]+|mailto:[^\s,;]+|\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', re.IGNORECASE)
