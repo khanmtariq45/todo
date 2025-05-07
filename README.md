@@ -51,7 +51,7 @@ def find_all_links(base_path):
 
             if ext == "docx":
                 links = extract_links_from_docx(full_path)
-            else:  # .doc
+            else:
                 links = extract_links_from_doc(full_path)
 
             if links:
@@ -67,42 +67,83 @@ def generate_html_log(file_links, total, output_path):
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Word Link Report</title>
+    <title>Word File Link Report</title>
     <style>
-        body {{ font-family: Arial, sans-serif; background: #f9f9f9; color: #333; }}
-        h1 {{ color: #2c3e50; }}
-        .file-block {{ margin-bottom: 20px; padding: 10px; border-left: 5px solid #2980b9; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-        .file-path {{ font-weight: bold; color: #2980b9; word-break: break-all; }}
-        .link-count {{ color: #27ae60; }}
-        .link {{ display: block; margin-left: 10px; color: #2980b9; text-decoration: none; }}
-        .link:hover {{ text-decoration: underline; }}
-        .footer {{ margin-top: 30px; font-size: 1.2em; font-weight: bold; color: #c0392b; }}
+        body {{
+            font-family: 'Segoe UI', sans-serif;
+            background: #f5f7fa;
+            padding: 30px;
+            color: #333;
+        }}
+        h1 {{
+            color: #2c3e50;
+        }}
+        .summary {{
+            background-color: #d9edf7;
+            padding: 15px;
+            border-left: 5px solid #31708f;
+            margin-bottom: 25px;
+            font-size: 1.3em;
+        }}
+        .file {{
+            background-color: #fff;
+            border-left: 5px solid #3498db;
+            margin-bottom: 20px;
+            padding: 15px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }}
+        .file .path {{
+            font-weight: bold;
+            color: #2980b9;
+            word-wrap: break-word;
+        }}
+        .file .count {{
+            color: #27ae60;
+            margin: 8px 0;
+        }}
+        .file a {{
+            display: block;
+            margin-left: 10px;
+            color: #2980b9;
+            text-decoration: none;
+        }}
+        .file a:hover {{
+            text-decoration: underline;
+        }}
+        .footer {{
+            margin-top: 40px;
+            font-size: 1.1em;
+            color: #999;
+        }}
     </style>
 </head>
 <body>
-    <h1>Word Files Link Report</h1>
-    <p>Generated on {timestamp}</p>
+    <h1>Word File Link Report</h1>
+    <div class="summary">
+        <strong>Total Links Found:</strong> {total}<br>
+        <strong>Generated:</strong> {timestamp}
+    </div>
 """
 
     for file, links in file_links.items():
-        html += f'<div class="file-block">'
-        html += f'<div class="file-path">{file}</div>'
-        html += f'<div class="link-count">Link Count: {len(links)}</div>'
+        html += f'<div class="file">'
+        html += f'<div class="path">{file}</div>'
+        html += f'<div class="count">Links: {len(links)}</div>'
         for link in links:
-            html += f'<a class="link" href="{link}" target="_blank">{link}</a>'
+            html += f'<a href="{link}" target="_blank">{link}</a>'
         html += '</div>'
 
-    html += f'<div class="footer">Total Links Found: {total}</div>'
+    html += f'<div class="footer">End of Report</div>'
     html += '</body></html>'
 
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html)
 
-    print(f"\nHTML log saved to: {output_path}")
+    print(f"\nReport saved as: {output_path}")
 
 # === Run Script ===
-base_path = r"C:\Your\WordFiles\Folder"  # <--- Change to your base folder
-output_html = "link_report.html"
+base_path = r"C:\Your\WordFiles\Folder"  # Change this path
+output_html = "word_links_report.html"
 
 results, total_count = find_all_links(base_path)
 generate_html_log(results, total_count, output_html)
