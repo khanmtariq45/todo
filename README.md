@@ -1,500 +1,155 @@
 import os
 import re
-import sys
-import urllib.parse
-from datetime import datetime
+import html
 from docx import Document
-from win32com import client
-import pyodbc
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from docx.opc.package import OpcPackage
+from docx.oxml.shared import qn
+from docx.opc.part import Part
+from datetime import datetime
 
-# Regex patterns
-URL_PATTERN = (
-    r'(https?://[^\s<>"\'{}|\\^`[]+|www\.[^\s<>"\'{}|\\^`[]+|'
-    r'ftp://[^\s<>"\'{}|\\^`[]+|mailto:[^\s<>"\'{}|\\^`[]+|'
-    r'file://[^\s<>"\'{}|\\^`[]+|tel:[^\s<>"\'{}|\\^`[]+)'
-)
-LOCAL_FILE_PATTERN = (
-    r'(file://[^\s<>"\'{}|\\^`\]]+|[A-Za-z]:[\\/][^\s<>"\'{}|\\^`\]]+|'
-    r'(?:\.\.?[\\/]|[^:/\\\s<>|]+[\\/])[^\s<>"\'{}|\\^`\]]+)'
-)
-
-URL_REGEX = re.compile(URL_PATTERN, re.IGNORECASE)
-LOCAL_FILE_REGEX = re.compile(LOCAL_FILE_PATTERN, re.IGNORECASE)
-EXCLUDE_PREFIXES = ("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")
-
-def get_last_two_path_parts(path):
-    path = urllib.parse.unquote(path)
-    path = path.replace("\\", "/").rstrip("/")
-    parts = path.split("/")
-    return "/".join(parts[-2:]) if len(parts) >= 2 else path
-
-log_entries = []
-
-def log(message):
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    log_entries.append(f"[{timestamp}] {message}")
-
-# def write_log_to_file():
-#     with open("link_update_log.txt", "w", encoding="utf-8") as log_file:
-#         log_file.write("\n".join(log_entries))
-
-def fetch_qms_file_id(filepath):
-    dbConnectionString = (
-        "DRIVER={ODBC Driver 17 for SQL Server};"
-        "SERVER=dev.c5owyuw64shd.ap-south-1.rds.amazonaws.com,1982;"
-        "DATABASE=JIBE_Main;"
-        "UID=j2;"
-        "PWD=123456;"
-        "Max Pool Size=200;"
-    )
-
+def extract_hyperlinks(doc_path):
     try:
-        conn = pyodbc.connect(dbConnectionString)
-        cursor = conn.cursor()
-        normalized_path = get_last_two_path_parts(filepath)
-        cursor.execute("""
-            SELECT TOP 1 encryptedDocId FROM QMS_DocIds_Import01 
-            WHERE filepath LIKE ?
-        """, f"%{normalized_path}%")
-        row = cursor.fetchone()
-        return row[0] if row else None
+        doc = Document(doc_path)
+        package = OpcPackage.open(doc_path)
+        links = []
+        rels = {}
+        line_number = 0
 
-    except Exception as e:
-        log(f"Database error for {filepath}: {e}")
-        return None
-    finally:
-        try:
-            cursor.close()
-            conn.close()
-        except:
-            pass
+        # Build rels map
+        for rel in package.parts[0].rels.values():
+            if rel.reltype == RT.HYPERLINK:
+                rels[rel.rId] = rel.target_ref
 
-def is_local_file_url(url):
-    url = url.strip().lower()
-    return (LOCAL_FILE_REGEX.match(url) and not url.startswith(EXCLUDE_PREFIXES))
-
-def get_qms_replacement(url):
-    encrypted_doc_id = fetch_qms_file_id(url)
-    if encrypted_doc_id:
-        log(f"Found encrypted ID for {url} => {encrypted_doc_id}")
-        return f"#\\qms?DocId={encrypted_doc_id}"
-    else:
-        log(f"No encrypted ID found for {url}")
-    return None
-
-def process_hyperlink(hyperlink, line_offset, source_type):
-    try:
-        if not (hyperlink and hasattr(hyperlink, 'address') and hyperlink.address):
-            return None
-        url = hyperlink.address.strip()
-        if not is_local_file_url(url):
-            return None
-        replacement = get_qms_replacement(url)
-        if not replacement:
-            log(f"Replacement not found for {url}")
-            return None
-        display_text = (hyperlink.text.strip() if hasattr(hyperlink, 'text') and hyperlink.text 
-                        else replacement)
-        log(f"Prepared replacement: {url} => {replacement}")
-        return (url, replacement, line_offset, source_type, display_text)
-    except Exception as e:
-        log(f"Hyperlink processing error: {e}")
-        return None
-
-def extract_links_from_text(text, line_offset, existing_links):
-    links = []
-    if not text.strip():
-        return links
-    for url in URL_REGEX.findall(text):
-        if url and not any(url in found_url for found_url, *_ in existing_links):
-            if is_local_file_url(url):
-                replacement = get_qms_replacement(url)
-                if replacement:
-                    links.append((url, replacement, line_offset, "Text", replacement))
-    return links
-
-def extract_paragraph_links(paragraph, line_offset):
-    links = []
-    text = paragraph.text.strip()
-    if not text:
-        return links
-    if hasattr(paragraph, 'hyperlinks'):
-        for hyperlink in paragraph.hyperlinks:
-            link_data = process_hyperlink(hyperlink, line_offset, "Hyperlink")
-            if link_data:
-                links.append(link_data)
-    links.extend(extract_links_from_text(text, line_offset, links))
-    return links
-
-def update_docx_file(file_path, links_to_update):
-    try:
-        doc = Document(file_path)
-        updated = False
         for para in doc.paragraphs:
-            if hasattr(para, 'hyperlinks'):
-                for hyperlink in para.hyperlinks:
-                    for original, replacement, *_ in links_to_update:
-                        if hyperlink.address and original in hyperlink.address:
-                            hyperlink.address = replacement
-                            updated = True
-                            log(f"Updated hyperlink in DOCX: {original} => {replacement}")
-            for original, replacement, *_ in links_to_update:
-                if original in para.text:
-                    para.text = para.text.replace(original, replacement)
-                    updated = True
-                    log(f"Replaced text in paragraph: {original} => {replacement}")
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for para in cell.paragraphs:
-                        for original, replacement, *_ in links_to_update:
-                            if original in para.text:
-                                para.text = para.text.replace(original, replacement)
-                                updated = True
-                                log(f"Replaced text in table cell: {original} => {replacement}")
-        for section in doc.sections:
-            for part in (section.header, section.footer):
-                if part:
-                    for para in part.paragraphs:
-                        for original, replacement, *_ in links_to_update:
-                            if original in para.text:
-                                para.text = para.text.replace(original, replacement)
-                                updated = True
-                                log(f"Replaced text in header/footer: {original} => {replacement}")
-        if updated:
-            doc.save(file_path)
-            log(f"Saved updated DOCX: {file_path}")
-        return updated
+            line_number += 1
+            for run in para.runs:
+                r_element = run._element
+                hlink = r_element.find('.//w:hyperlink', namespaces=r_element.nsmap)
+                if hlink is not None:
+                    rid = hlink.get(qn('r:id'))
+                    if rid in rels:
+                        link = rels[rid]
+                        text = run.text
+                        links.append((text, link, line_number))
+        return links
     except Exception as e:
-        log(f"Error updating DOCX file {file_path}: {e}")
-        return False
+        return f"Error: {str(e)}"
 
-def update_doc_file(file_path, links_to_update):
-    word = doc = None
+def update_links(doc_path, replacements):
     try:
-        word = client.Dispatch("Word.Application")
-        word.Visible = False
-        doc = word.Documents.Open(os.path.abspath(file_path), ReadOnly=False, Visible=False)
+        doc = Document(doc_path)
         updated = False
-        for para in doc.Paragraphs:
-            text = para.Range.Text.strip()
-            for original, replacement, *_ in links_to_update:
-                if original in para.Range.Text:
-                    para.Range.Text = para.Range.Text.replace(original, replacement)
-                    updated = True
-                    log(f"Updated DOC paragraph: {original} => {replacement}")
-            if hasattr(para.Range, 'Hyperlinks'):
-                for hyperlink in para.Range.Hyperlinks:
-                    for original, replacement, *_ in links_to_update:
-                        if hyperlink.Address and original in hyperlink.Address:
-                            hyperlink.Address = replacement
-                            updated = True
-                            log(f"Updated DOC hyperlink: {original} => {replacement}")
-        for section in doc.Sections:
-            for hf in [section.Headers(1), section.Footers(1)]:
-                if hf:
-                    for original, replacement, *_ in links_to_update:
-                        if original in hf.Range.Text:
-                            hf.Range.Text = hf.Range.Text.replace(original, replacement)
-                            updated = True
-                            log(f"Updated DOC header/footer: {original} => {replacement}")
-        if updated:
-            doc.Save()
-            log(f"Saved updated DOC: {file_path}")
-        return updated
-    except Exception as e:
-        log(f"Error updating DOC file {file_path}: {e}")
-        return False
-    finally:
-        if doc:
-            doc.Close(False)
-        if word:
-            word.Quit()
+        package = OpcPackage.open(doc_path)
+        rels_part = package.parts[0]
 
-def extract_docx_links(file_path):
-    links = []
-    try:
-        doc = Document(file_path)
-        line_offset = 0
+        updated_links = []
+        rels = {rel.rId: rel for rel in rels_part.rels.values() if rel.reltype == RT.HYPERLINK}
+        line_number = 0
+
         for para in doc.paragraphs:
-            links.extend(extract_paragraph_links(para, line_offset))
-            line_offset += len(para.text.split('\n'))
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for para in cell.paragraphs:
-                        links.extend(extract_paragraph_links(para, line_offset))
-                        line_offset += len(para.text.split('\n'))
-        for section in doc.sections:
-            for part in (section.header, section.footer):
-                if part:
-                    for para in part.paragraphs:
-                        links.extend(extract_paragraph_links(para, line_offset))
-                        line_offset += len(para.text.split('\n'))
+            line_number += 1
+            for run in para.runs:
+                r_element = run._element
+                hlink = r_element.find('.//w:hyperlink', namespaces=r_element.nsmap)
+                if hlink is not None:
+                    rid = hlink.get(qn('r:id'))
+                    if rid in rels:
+                        link_obj = rels[rid]
+                        old_link = link_obj.target_ref
+                        for pattern, replacement in replacements.items():
+                            if re.search(pattern, old_link):
+                                new_link = re.sub(pattern, replacement, old_link)
+                                link_obj._target = new_link
+                                updated_links.append((run.text, new_link, line_number))
+                                updated = True
+
+        if updated:
+            doc.save(doc_path)
+
+        return updated_links
     except Exception as e:
-        log(f"Error extracting links from DOCX {file_path}: {e}")
-    return links
+        return f"Error: {str(e)}"
 
-def extract_doc_links(file_path):
-    links = []
-    word = doc = None
-    try:
-        word = client.Dispatch("Word.Application")
-        word.Visible = False
-        doc = word.Documents.Open(os.path.abspath(file_path), ReadOnly=True, Visible=False)
-        line_offset = 0
-        for para in doc.Paragraphs:
-            text = para.Range.Text.strip()
-            if text:
-                if hasattr(para.Range, 'Hyperlinks'):
-                    for hyperlink in para.Range.Hyperlinks:
-                        link_data = process_hyperlink(hyperlink, line_offset, "Hyperlink")
-                        if link_data:
-                            links.append(link_data)
-                links.extend(extract_links_from_text(text, line_offset, links))
-                line_offset += len(text.split('\n'))
-        for section in doc.Sections:
-            for hf in [section.Headers(1), section.Footers(1)]:
-                if hf:
-                    if hasattr(hf.Range, 'Hyperlinks'):
-                        for hyperlink in hf.Range.Hyperlinks:
-                            link_data = process_hyperlink(hyperlink, line_offset, "Header/Footer")
-                            if link_data:
-                                links.append(link_data)
-                    links.extend(extract_links_from_text(hf.Range.Text, line_offset, links))
-                    line_offset += len(hf.Range.Text.split('\n'))
-    except Exception as e:
-        log(f"Error extracting links from DOC {file_path}: {e}")
-    finally:
-        if doc:
-            doc.Close(False)
-        if word:
-            word.Quit()
-    return links
+def generate_report(report_data, output_path):
+    html_content = [
+        "<html><head><style>",
+        "body{font-family:Arial;margin:40px;}",
+        "h1{color:#333;}",
+        "h2{margin-top:40px;color:#444;}",
+        "table{width:100%;border-collapse:collapse;margin-top:10px;}",
+        "th,td{border:1px solid #ccc;padding:8px;text-align:left;}",
+        "th{background:#eee;}",
+        ".error{color:red;}",
+        ".updated{color:green;}",
+        "</style></head><body>",
+        "<h1>Word Link Replacement Report</h1>",
+    ]
 
-def write_log_to_html():
-    html_template = """<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Link Update Log Report</title>
-    <style>
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f9f9f9;
-        }}
-        h1 {{
-            color: #2c3e50;
-            text-align: center;
-            border-bottom: 2px solid #3498db;
-            padding-bottom: 10px;
-            margin-bottom: 30px;
-        }}
-        .log-entry {{
-            background-color: white;
-            border-radius: 5px;
-            padding: 15px;
-            margin-bottom: 15px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        }}
-        .timestamp {{
-            color: #7f8c8d;
-            font-weight: bold;
-            margin-right: 10px;
-        }}
-        .success {{
-            color: #27ae60;
-        }}
-        .error {{
-            color: #e74c3c;
-        }}
-        .info {{
-            color: #3498db;
-        }}
-        .link {{
-            color: #2980b9;
-            text-decoration: none;
-            word-break: break-all;
-        }}
-        .link:hover {{
-            text-decoration: underline;
-        }}
-        .summary {{
-            background-color: #2c3e50;
-            color: white;
-            padding: 20px;
-            border-radius: 5px;
-            margin-top: 30px;
-        }}
-        .summary h2 {{
-            margin-top: 0;
-            border-bottom: 1px solid #3498db;
-            padding-bottom: 10px;
-        }}
-        .stats {{
-            display: flex;
-            justify-content: space-between;
-            flex-wrap: wrap;
-        }}
-        .stat-box {{
-            background-color: #34495e;
-            padding: 15px;
-            border-radius: 5px;
-            margin: 10px 0;
-            flex: 1;
-            min-width: 200px;
-            margin-right: 15px;
-        }}
-        .stat-box:last-child {{
-            margin-right: 0;
-        }}
-        .stat-value {{
-            font-size: 24px;
-            font-weight: bold;
-            color: #3498db;
-        }}
-        .divider {{
-            border-top: 1px solid #ecf0f1;
-            margin: 20px 0;
-        }}
-    </style>
-</head>
-<body>
-    <h1>Link Update Log Report</h1>
-    
-    {log_entries}
-    
-    <div class="summary">
-        <h2>Summary</h2>
-        <div class="stats">
-            <div class="stat-box">
-                <div>Processed Files</div>
-                <div class="stat-value">{processed}</div>
-            </div>
-            <div class="stat-box">
-                <div>Updated Files</div>
-                <div class="stat-value">{updated}</div>
-            </div>
-            <div class="stat-box">
-                <div>Total Replacements</div>
-                <div class="stat-value">{replacements}</div>
-            </div>
-        </div>
-    </div>
-    
-    <div class="divider"></div>
-    
-    <p style="text-align: center; color: #7f8c8d;">
-        Report generated on {generation_time}
-    </p>
-</body>
-</html>
-"""
+    total = len(report_data)
+    updated = len([f for f in report_data if f['status'] == 'updated'])
+    errors = len([f for f in report_data if f['status'] == 'error'])
 
-    # Filter only useful entries (those containing links or errors)
-    useful_entries = []
-    processed = updated = replacements = 0
+    html_content.append(f"<p><b>Total files scanned:</b> {total}</p>")
+    html_content.append(f"<p><b>Files updated:</b> <span class='updated'>{updated}</span></p>")
+    html_content.append(f"<p><b>Files with errors:</b> <span class='error'>{errors}</span></p>")
     
-    for entry in log_entries:
-        if any(keyword in entry.lower() for keyword in ["http://", "https://", "file://", "error", "failed", "replacement"]):
-            useful_entries.append(entry)
-    
-    # Extract summary stats from the log
-    for entry in log_entries:
-        if "Processed files:" in entry:
-            processed = entry.split(":")[1].strip()
-        elif "Updated files:" in entry:
-            updated = entry.split(":")[1].strip()
-        elif "Total replacements:" in entry:
-            replacements = entry.split(":")[1].strip()
-    
-    # Format each log entry
-    formatted_entries = []
-    for entry in useful_entries:
-        timestamp_end = entry.find("]")
-        timestamp = entry[:timestamp_end+1]
-        message = entry[timestamp_end+2:]
-        
-        # Determine entry type for styling
-        if "error" in message.lower() or "failed" in message.lower():
-            entry_class = "error"
-        elif "replacement" in message.lower() or "found" in message.lower():
-            entry_class = "success"
-        else:
-            entry_class = "info"
-        
-        # Make URLs clickable
-        urls = URL_REGEX.findall(message) + LOCAL_FILE_REGEX.findall(message)
-        for url in set(urls):
-            if url in message:
-                message = message.replace(url, f'<a href="{url}" class="link" target="_blank">{url}</a>')
-        
-        formatted_entry = f"""
-        <div class="log-entry">
-            <span class="timestamp">{timestamp}</span>
-            <span class="{entry_class}">{message}</span>
-        </div>
-        """
-        formatted_entries.append(formatted_entry)
-    
-    # Fill the template
-    html_content = html_template.format(
-        log_entries="\n".join(formatted_entries),
-        processed=processed,
-        updated=updated,
-        replacements=replacements,
-        generation_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    )
-    
-    with open("link_update_report.html", "w", encoding="utf-8") as html_file:
-        html_file.write(html_content)
-    log(f"HTML report generated: link_update_report.html")
+    html_content.append("<hr><h2>Detailed File Results</h2><ul>")
+    for f in report_data:
+        file_display = html.escape(f['path'])
+        if f['status'] == 'updated':
+            html_content.append(f"<li><b>{file_display}</b> - <span class='updated'>Updated</span></li>")
+        elif f['status'] == 'error':
+            html_content.append(f"<li><b>{file_display}</b> - <span class='error'>Error</span></li>")
+    html_content.append("</ul><hr>")
 
-def scan_and_update_documents(base_path):
-    processed = updated = total_replacements = 0
-    log(f"Starting scan in: {base_path}")
-    for root, _, files in os.walk(base_path):
-        for file in files:
-            ext = os.path.splitext(file)[1].lower()
-            if ext not in (".doc", ".docx"):
-                continue
-            full_path = os.path.join(root, file)
-            processed += 1
-            print(f"Processing: {full_path}")
-            log(f"Processing [{processed}]: {full_path}")
-            try:
-                extractor = extract_docx_links if ext == ".docx" else extract_doc_links
-                links = extractor(full_path)
-                if not links:
-                    log("No links found.")
-                    continue
-                replaceable_links = [(orig, repl) for orig, repl, *_ in links if repl]
-                if not replaceable_links:
-                    log("No replaceable links found.")
-                    continue
-                updater = update_docx_file if ext == ".docx" else update_doc_file
-                if updater(full_path, replaceable_links):
-                    updated += 1
-                    total_replacements += len(replaceable_links)
-                    log(f"Updated {len(replaceable_links)} links.")
-            except Exception as e:
-                log(f"[ERROR] {file}: {e}")
-    log("=== Scan Complete ===")
-    log(f"Processed files: {processed}")
-    log(f"Updated files: {updated}")
-    log(f"Total replacements: {total_replacements}")
-    write_log_to_html()
+    for file_result in report_data:
+        file_display = html.escape(file_result['path'])
+        html_content.append(f"<h2>{file_display}</h2>")
+        if file_result['status'] == 'updated':
+            html_content.append("<p class='updated'><b>Links Updated:</b></p><table><tr><th>Line</th><th>Display Text</th><th>Updated Link</th></tr>")
+            for text, link, line in file_result['data']:
+                html_content.append(f"<tr><td>{line}</td><td>{html.escape(text)}</td><td>{html.escape(link)}</td></tr>")
+            html_content.append("</table>")
+        elif file_result['status'] == 'error':
+            html_content.append(f"<p class='error'><b>Error:</b> {html.escape(file_result['data'])}</p>")
 
+    html_content.append("</body></html>")
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(html_content))
+
+
+# === Main execution ===
 if __name__ == "__main__":
-    folder_path = input("Enter folder path: ").strip()
-    if not folder_path or not os.path.exists(folder_path):
-        print("Invalid folder path.")
-        sys.exit(1)
-    scan_and_update_documents(folder_path)
-    print("Log written to link_update_log.txt")
+    folder = "path_to_your_docs_folder"  # change this
+    replacements = {
+        r'file:///old_path/': 'file:///new_path/',
+        r'C:\\old\\path\\': 'C:\\new\\path\\'
+    }
+
+    report_data = []
+
+    for root, dirs, files in os.walk(folder):
+        for file in files:
+            if file.lower().endswith(".docx"):
+                full_path = os.path.join(root, file)
+                result = update_links(full_path, replacements)
+
+                if isinstance(result, list) and result:
+                    report_data.append({
+                        'path': full_path,
+                        'status': 'updated',
+                        'data': result
+                    })
+                elif isinstance(result, str) and result.startswith("Error:"):
+                    report_data.append({
+                        'path': full_path,
+                        'status': 'error',
+                        'data': result
+                    })
+
+    now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_file = f"link_update_report_{now}.html"
+    generate_report(report_data, output_file)
+    print(f"Report saved to: {output_file}")
