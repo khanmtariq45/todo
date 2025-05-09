@@ -1,418 +1,207 @@
-import os
-import re
-import sys
-import urllib.parse
-from datetime import datetime
-from docx import Document
-from win32com import client
-import pyodbc
+import os import re import sys import urllib.parse from datetime import datetime from docx import Document from win32com import client import pyodbc
 
-# Combined regex patterns
-URL_PATTERN = (
-    r'(https?://[^\s<>"\'{}|\\^`[]+|www\.[^\s<>"\'{}|\\^`[]+|'
-    r'ftp://[^\s<>"\'{}|\\^`[]+|mailto:[^\s<>"\'{}|\\^`[]+|'
-    r'file://[^\s<>"\'{}|\\^`[]+|tel:[^\s<>"\'{}|\\^`[]+)'
-)
-LOCAL_FILE_PATTERN = (
-    r'(file://[^\s<>"\'{}|\\^`\]]+|[A-Za-z]:[\\/][^\s<>"\'{}|\\^`\]]+|'
-    r'(?:\.\.?[\\/]|[^:/\\\s<>|]+[\\/])[^\s<>"\'{}|\\^`\]]+)'
-)
+Combined regex patterns
 
-URL_REGEX = re.compile(URL_PATTERN, re.IGNORECASE)
-LOCAL_FILE_REGEX = re.compile(LOCAL_FILE_PATTERN, re.IGNORECASE)
+URL_PATTERN = ( r'(https?://[^\s<>"]+|www.[^\s<>"]+|' r'ftp://[^\s<>"]+|mailto:[^\s<>"]+|' r'file://[^\s<>"]+|tel:[^\s<>"]+)' ) LOCAL_FILE_PATTERN = ( r'(file://[^\s<>"]+|[A-Za-z]:[\/][^\s<>"]+|' r'(?:..?[\/]|[^:/\\s<>|]+[\/])[^\s<>"]+)' )
 
-# Common prefixes to exclude
+URL_REGEX = re.compile(URL_PATTERN, re.IGNORECASE) LOCAL_FILE_REGEX = re.compile(LOCAL_FILE_PATTERN, re.IGNORECASE)
+
+Common prefixes to exclude
+
 EXCLUDE_PREFIXES = ("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")
 
-def fetch_qms_file_id(filepath):
-    """Fetch encryptedDocId from database for the given filepath"""
-    dbConnectionString = (
-        "DRIVER={ODBC Driver 17 for SQL Server};"
-        "SERVER=dev.c5owyuw64shd.ap-south-1.rds.amazonaws.com,1982;"
-        "DATABASE=JIBE_Main;"
-        "UID=j2;"
-        "PWD=123456;"
-        "Max Pool Size=200;"
-    )
+Setup log file
 
-    try:
-        conn = pyodbc.connect(dbConnectionString)
-        cursor = conn.cursor()
+LOG_FILE = f"update_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt" def log(message): with open(LOG_FILE, "a", encoding="utf-8") as f: f.write(f"{datetime.now().isoformat()} - {message}\n") print(message)
 
-        query = """
-            SELECT TOP 1 encryptedDocId
-            FROM QMS_DocIds_Import01 
-            WHERE filepath LIKE ?
-        """
-        # Normalize the path for comparison
-        normalized_path = filepath.replace("\\", "/").lower()
-        cursor.execute(query, f"%{normalized_path}%")
-        row = cursor.fetchone()
+def fetch_qms_file_id(filepath): dbConnectionString = ( "DRIVER={ODBC Driver 17 for SQL Server};" "SERVER=dev.c5owyuw64shd.ap-south-1.rds.amazonaws.com,1982;" "DATABASE=JIBE_Main;" "UID=j2;" "PWD=123456;" "Max Pool Size=200;" )
 
-        return row[0] if row else None
+try:
+    conn = pyodbc.connect(dbConnectionString)
+    cursor = conn.cursor()
 
-    except Exception as e:
-        print(f"Database error for {filepath}: {e}")
-        return None
-    finally:
-        try:
-            cursor.close()
-            conn.close()
-        except:
-            pass
+    query = """
+        SELECT TOP 1 encryptedDocId
+        FROM QMS_DocIds_Import01 
+        WHERE filepath LIKE ?
+    """
+    normalized_path = filepath.replace("\\", "/").lower()
+    cursor.execute(query, f"%{normalized_path}%")
+    row = cursor.fetchone()
+    if row:
+        log(f"Found encryptedDocId for {filepath}: {row[0]}")
+    else:
+        log(f"No encryptedDocId found for {filepath}")
+    return row[0] if row else None
 
-def normalize_path(path):
-    """Normalize and extract last two parts of a path."""
-    path = urllib.parse.unquote(path)
-    return "/".join(path.replace("\\", "/").rstrip("/").split("/")[-2:])
-
-def is_local_file_url(url):
-    """Check if URL is a local file path that needs replacement"""
-    url = url.strip().lower()
-    return (LOCAL_FILE_REGEX.match(url) and 
-            not url.startswith(EXCLUDE_PREFIXES))
-
-def get_qms_replacement(url):
-    """Get the QMS replacement string for a local file URL"""
-    encrypted_doc_id = fetch_qms_file_id(url)
-    if encrypted_doc_id:
-        return f"#\\qms?DocId={encrypted_doc_id}"
+except Exception as e:
+    log(f"Database error for {filepath}: {e}")
     return None
-
-def process_hyperlink(hyperlink, line_offset, source_type):
-    """Process a single hyperlink object."""
+finally:
     try:
-        if not (hyperlink and hasattr(hyperlink, 'address') and hyperlink.address):
-            return None
+        cursor.close()
+        conn.close()
+    except:
+        pass
 
-        url = hyperlink.address.strip()
-        if not is_local_file_url(url):
-            return None
+def is_local_file_url(url): url = url.strip().lower() return (LOCAL_FILE_REGEX.match(url) and not url.startswith(EXCLUDE_PREFIXES))
 
-        replacement = get_qms_replacement(url)
-        if not replacement:
-            return None
+def get_qms_replacement(url): encrypted_doc_id = fetch_qms_file_id(url) if encrypted_doc_id: return f"#\qms?DocId={encrypted_doc_id}" return None
 
-        print(f"{replacement}")
-        display_text = (hyperlink.text.strip() if hasattr(hyperlink, 'text') and hyperlink.text 
-                       else replacement)
-        return (url, replacement, line_offset, source_type, display_text)
-    except Exception as e:
-        print(f"Warning: Hyperlink error - {e}")
+def process_hyperlink(hyperlink, line_offset, source_type): try: if not (hyperlink and hasattr(hyperlink, 'Address') and hyperlink.Address): return None
+
+url = hyperlink.Address.strip()
+    if not is_local_file_url(url):
         return None
 
-def extract_links_from_text(text, line_offset, existing_links):
-    """Extract links from plain text."""
-    links = []
-    if not text.strip():
-        return links
+    replacement = get_qms_replacement(url)
+    if replacement:
+        display_text = (hyperlink.TextToDisplay.strip()
+                        if hasattr(hyperlink, 'TextToDisplay') and hyperlink.TextToDisplay
+                        else replacement)
+        log(f"Found: {url} | Replacement: {replacement} | Source: {source_type}")
+        return (url, replacement, line_offset, source_type, display_text)
+    else:
+        log(f"No replacement found for {url}")
 
-    for url in URL_REGEX.findall(text):
-        if url and not any(url in found_url for found_url, *_ in existing_links):
-            if is_local_file_url(url):
-                replacement = get_qms_replacement(url)
-                if replacement:
-                    links.append((url, replacement, line_offset, "Text", replacement))
-    return links
+except Exception as e:
+    log(f"Hyperlink error: {e}")
+return None
 
-def extract_paragraph_links(paragraph, line_offset):
-    """Extract links from a paragraph object."""
-    links = []
-    text = paragraph.text.strip()
-    if not text:
-        return links
+def extract_links_from_text(text, line_offset, existing_links): links = [] if not text.strip(): return links
 
-    # Process hyperlinks
-    if hasattr(paragraph, 'hyperlinks'):
-        for hyperlink in paragraph.hyperlinks:
-            link_data = process_hyperlink(hyperlink, line_offset, "Hyperlink")
-            if link_data:
-                links.append(link_data)
+for url in URL_REGEX.findall(text):
+    if url and not any(url in found_url for found_url, *_ in existing_links):
+        if is_local_file_url(url):
+            replacement = get_qms_replacement(url)
+            if replacement:
+                log(f"Text link: {url} => {replacement}")
+                links.append((url, replacement, line_offset, "Text", replacement))
+            else:
+                log(f"Text link not updated (no replacement): {url}")
+return links
 
-    # Process text URLs
-    links.extend(extract_links_from_text(text, line_offset, links))
-    return links
+def extract_paragraph_links(paragraph, line_offset): links = [] text = paragraph.text.strip() if not text: return links
 
-def update_docx_file(file_path, links_to_update):
-    """Update a DOCX file with QMS document IDs"""
-    try:
-        doc = Document(file_path)
-        updated = False
+# Hyperlinks
+if hasattr(paragraph, 'hyperlinks'):
+    for hyperlink in paragraph.hyperlinks:
+        link_data = process_hyperlink(hyperlink, line_offset, "Hyperlink")
+        if link_data:
+            links.append(link_data)
 
-        # Update paragraphs
-        for para in doc.paragraphs:
-            if not para.text.strip():
-                continue
-            
-            # Update hyperlinks
-            if hasattr(para, 'hyperlinks'):
-                for hyperlink in para.hyperlinks:
+links.extend(extract_links_from_text(text, line_offset, links))
+return links
+
+def extract_docx_links(file_path): links = [] try: doc = Document(file_path) line_offset = 0
+
+for para in doc.paragraphs:
+        links.extend(extract_paragraph_links(para, line_offset))
+        line_offset += len(para.text.split('\n'))
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    links.extend(extract_paragraph_links(para, line_offset))
+                    line_offset += len(para.text.split('\n'))
+
+    for section in doc.sections:
+        for part in (section.header, section.footer):
+            if part:
+                for para in part.paragraphs:
+                    links.extend(extract_paragraph_links(para, line_offset))
+                    line_offset += len(para.text.split('\n'))
+
+except Exception as e:
+    log(f"Error extracting links from DOCX {file_path}: {e}")
+return links
+
+def update_docx_file(file_path, links_to_update): try: doc = Document(file_path) updated = False
+
+for para in doc.paragraphs:
+        if not para.text.strip():
+            continue
+        for original, replacement, *_ in links_to_update:
+            if original in para.text:
+                para.text = para.text.replace(original, replacement)
+                updated = True
+                log(f"Updated in paragraph: {original} => {replacement}")
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
                     for original, replacement, *_ in links_to_update:
-                        if hyperlink.address and original in hyperlink.address:
-                            hyperlink.address = replacement
+                        if original in para.text:
+                            para.text = para.text.replace(original, replacement)
                             updated = True
-            
-            # Update text content
-            for original, replacement, *_ in links_to_update:
-                if original in para.text:
-                    para.text = para.text.replace(original, replacement)
-                    updated = True
+                            log(f"Updated in table: {original} => {replacement}")
 
-        # Update tables
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for para in cell.paragraphs:
-                        for original, replacement, *_ in links_to_update:
-                            if original in para.text:
-                                para.text = para.text.replace(original, replacement)
-                                updated = True
-
-        # Update headers and footers
-        for section in doc.sections:
-            for part in (section.header, section.footer):
-                if part:
-                    for para in part.paragraphs:
-                        for original, replacement, *_ in links_to_update:
-                            if original in para.text:
-                                para.text = para.text.replace(original, replacement)
-                                updated = True
-
-        if updated:
-            doc.save(file_path)
-            return True
-        return False
-
-    except Exception as e:
-        print(f"Error updating DOCX file {file_path}: {e}")
-        return False
-
-def update_doc_file(file_path, links_to_update):
-    """Update a DOC file with QMS document IDs using COM interface"""
-    word = doc = None
-    try:
-        word = client.Dispatch("Word.Application")
-        word.Visible = False
-        doc = word.Documents.Open(os.path.abspath(file_path), ReadOnly=False, Visible=False)
-        updated = False
-
-        # Update paragraphs
-        for para in doc.Paragraphs:
-            text = para.Range.Text.strip()
-            if not text:
-                continue
-            
-            # Update hyperlinks
-            if hasattr(para.Range, 'Hyperlinks'):
-                for hyperlink in para.Range.Hyperlinks:
+    for section in doc.sections:
+        for part in (section.header, section.footer):
+            if part:
+                for para in part.paragraphs:
                     for original, replacement, *_ in links_to_update:
-                        if hyperlink.Address and original in hyperlink.Address:
-                            hyperlink.Address = replacement
+                        if original in para.text:
+                            para.text = para.text.replace(original, replacement)
                             updated = True
-            
-            # Update text content
-            for original, replacement, *_ in links_to_update:
-                if original in para.Range.Text:
-                    para.Range.Text = para.Range.Text.replace(original, replacement)
-                    updated = True
+                            log(f"Updated in header/footer: {original} => {replacement}")
 
-        # Update headers and footers
-        for section in doc.Sections:
-            for hf in [section.Headers(1), section.Footers(1)]:
-                if hf:
-                    # Update hyperlinks in headers/footers
-                    if hasattr(hf.Range, 'Hyperlinks'):
-                        for hyperlink in hf.Range.Hyperlinks:
-                            for original, replacement, *_ in links_to_update:
-                                if hyperlink.Address and original in hyperlink.Address:
-                                    hyperlink.Address = replacement
-                                    updated = True
-                    
-                    # Update text in headers/footers
-                    for original, replacement, *_ in links_to_update:
-                        if original in hf.Range.Text:
-                            hf.Range.Text = hf.Range.Text.replace(original, replacement)
-                            updated = True
+    if updated:
+        doc.save(file_path)
+        log(f"File saved: {file_path}")
+        return True
+    return False
 
-        # Update shapes
-        if hasattr(doc, 'InlineShapes'):
-            for shape in doc.InlineShapes:
-                try:
-                    if shape and hasattr(shape, 'Hyperlink') and shape.Hyperlink:
-                        for original, replacement, *_ in links_to_update:
-                            if shape.Hyperlink.Address and original in shape.Hyperlink.Address:
-                                shape.Hyperlink.Address = replacement
-                                updated = True
-                except Exception as e:
-                    print(f"Warning: Shape hyperlink error - {e}")
+except Exception as e:
+    log(f"Error updating DOCX file {file_path}: {e}")
+    return False
 
-        if updated:
-            doc.Save()
-            return True
-        return False
+def scan_and_update_documents(base_path): processed_files = 0 updated_files = 0 total_replacements = 0 error_files = []
 
-    except Exception as e:
-        print(f"Error updating DOC file {file_path}: {e}")
-        return False
-    finally:
-        if doc:
-            doc.Close(False)
-        if word:
-            word.Quit()
+log(f"\nScanning and updating: {base_path}\n")
 
-def extract_docx_links(file_path):
-    """Extract all links from a DOCX file."""
-    links = []
-    try:
-        doc = Document(file_path)
-        line_offset = 0
+for root, _, files in os.walk(base_path):
+    for file in files:
+        ext = os.path.splitext(file)[1].lower()
+        if ext not in (".docx",):
+            continue
 
-        # Process paragraphs
-        for para in doc.paragraphs:
-            links.extend(extract_paragraph_links(para, line_offset))
-            line_offset += len(para.text.split('\n'))
+        full_path = os.path.join(root, file)
+        processed_files += 1
+        log(f"[{processed_files}] Processing: {full_path}")
 
-        # Process tables
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for para in cell.paragraphs:
-                        links.extend(extract_paragraph_links(para, line_offset))
-                        line_offset += len(para.text.split('\n'))
-
-        # Process headers and footers
-        for section in doc.sections:
-            for part in (section.header, section.footer):
-                if part:
-                    for para in part.paragraphs:
-                        links.extend(extract_paragraph_links(para, line_offset))
-                        line_offset += len(para.text.split('\n'))
-
-    except Exception as e:
-        print(f"Error extracting links from DOCX {file_path}: {e}")
-    
-    return links
-
-def extract_doc_links(file_path):
-    """Extract all links from a DOC file using COM interface."""
-    links = []
-    word = doc = None
-    try:
-        word = client.Dispatch("Word.Application")
-        word.Visible = False
-        doc = word.Documents.Open(os.path.abspath(file_path), ReadOnly=True, Visible=False)
-        line_offset = 0
-
-        # Process paragraphs
-        for para in doc.Paragraphs:
-            text = para.Range.Text.strip()
-            if text:
-                # Process hyperlinks
-                if hasattr(para.Range, 'Hyperlinks'):
-                    for hyperlink in para.Range.Hyperlinks:
-                        link_data = process_hyperlink(hyperlink, line_offset, "Hyperlink")
-                        if link_data:
-                            links.append(link_data)
-                
-                # Process text URLs
-                links.extend(extract_links_from_text(text, line_offset, links))
-                line_offset += len(text.split('\n'))
-
-        # Process headers and footers
-        for section in doc.Sections:
-            for hf in [section.Headers(1), section.Footers(1)]:
-                if hf:
-                    # Process hyperlinks
-                    if hasattr(hf.Range, 'Hyperlinks'):
-                        for hyperlink in hf.Range.Hyperlinks:
-                            link_data = process_hyperlink(hyperlink, line_offset, "Header/Footer")
-                            if link_data:
-                                links.append(link_data)
-                    
-                    # Process text URLs
-                    links.extend(extract_links_from_text(hf.Range.Text, line_offset, links))
-                    line_offset += len(hf.Range.Text.split('\n'))
-
-        # Process shapes
-        if hasattr(doc, 'InlineShapes'):
-            for shape in doc.InlineShapes:
-                try:
-                    if shape and hasattr(shape, 'Hyperlink') and shape.Hyperlink:
-                        link_data = process_hyperlink(shape.Hyperlink, line_offset, "Shape")
-                        if link_data:
-                            links.append(link_data)
-                except Exception as e:
-                    print(f"Warning: Shape hyperlink error - {e}")
-
-    except Exception as e:
-        print(f"Error extracting links from DOC {file_path}: {e}")
-    finally:
-        if doc:
-            doc.Close(False)
-        if word:
-            word.Quit()
-    
-    return links
-
-def scan_and_update_documents(base_path):
-    """Scan all DOC/DOCX files in the given path and update links"""
-    processed_files = 0
-    updated_files = 0
-    total_replacements = 0
-    error_files = []
-
-    print(f"\nScanning and updating: {base_path}\n")
-
-    for root, _, files in os.walk(base_path):
-        for file in files:
-            ext = os.path.splitext(file)[1].lower()
-            if ext not in (".doc", ".docx"):
+        try:
+            links = extract_docx_links(full_path)
+            replaceable_links = [(orig, repl) for orig, repl, *_ in links if repl]
+            if not replaceable_links:
+                log("No replaceable links found.")
                 continue
 
-            full_path = os.path.join(root, file)
-            processed_files += 1
-            print(f"[{processed_files}] Processing: {full_path}")
+            if update_docx_file(full_path, replaceable_links):
+                updated_files += 1
+                total_replacements += len(replaceable_links)
+                log(f"Updated {len(replaceable_links)} links")
 
-            try:
-                # First extract all local file links
-                extractor = extract_docx_links if ext == ".docx" else extract_doc_links
-                links = extractor(full_path)
-                
-                if not links:
-                    continue
+        except Exception as e:
+            error_files.append((full_path, str(e)))
+            log(f"[ERROR] {file}: {e}")
 
-                # Filter to only include links we can replace
-                replaceable_links = [(orig, repl) for orig, repl, *_ in links if repl]
-                if not replaceable_links:
-                    continue
+log("\n=== Scan Complete ===")
+log(f"Processed files: {processed_files}")
+log(f"Updated files: {updated_files}")
+log(f"Total replacements: {total_replacements}")
+if error_files:
+    log("\nErrors encountered:")
+    for file, error in error_files:
+        log(f"  {file}: {error}")
 
-                # Update the document
-                updater = update_docx_file if ext == ".docx" else update_doc_file
-                if updater(full_path, replaceable_links):
-                    updated_files += 1
-                    total_replacements += len(replaceable_links)
-                    print(f"  Updated {len(replaceable_links)} links")
+if name == "main": folder_path = input("Enter the folder path to scan and update Word documents: ").strip()
 
-            except Exception as e:
-                error_files.append((full_path, str(e)))
-                print(f"[ERROR] {file}: {e}")
+if not folder_path or not os.path.exists(folder_path):
+    print("Invalid path. Please provide a valid directory.")
+    sys.exit(1)
 
-    # Print summary
-    print("\n=== Scan Complete ===")
-    print(f"Processed files: {processed_files}")
-    print(f"Updated files: {updated_files}")
-    print(f"Total replacements: {total_replacements}")
-    if error_files:
-        print("\nErrors encountered:")
-        for file, error in error_files:
-            print(f"  {file}: {error}")
+scan_and_update_documents(folder_path)
 
-
-if __name__ == "__main__":
-    folder_path = input("Enter the folder path to scan and update Word documents: ").strip()
-
-    if not folder_path or not os.path.exists(folder_path):
-        print("Invalid path. Please provide a valid directory.")
-        sys.exit(1)
-
-    scan_and_update_documents(folder_path)
