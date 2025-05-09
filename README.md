@@ -6,156 +6,160 @@ from datetime import datetime
 from docx import Document
 from win32com import client
 
-# Regex for matching all hyperlinks
-URL_REGEX = re.compile(
-    r'('
-    r'https?://[^\s<>"\'{}|\\^`[]+'
-    r'|www\.[^\s<>"\'{}|\\^`[]+'
-    r'|ftp://[^\s<>"\'{}|\\^`[]+'
-    r'|mailto:[^\s<>"\'{}|\\^`[]+'
-    r'|file://[^\s<>"\'{}|\\^`[]+'
-    r'|tel:[^\s<>"\'{}|\\^`[]+'
-    r')',
-    re.IGNORECASE
+# Combined regex patterns
+URL_PATTERN = (
+    r'(https?://[^\s<>"\'{}|\\^`[]+|www\.[^\s<>"\'{}|\\^`[]+|'
+    r'ftp://[^\s<>"\'{}|\\^`[]+|mailto:[^\s<>"\'{}|\\^`[]+|'
+    r'file://[^\s<>"\'{}|\\^`[]+|tel:[^\s<>"\'{}|\\^`[]+)'
+)
+LOCAL_FILE_PATTERN = (
+    r'(file://[^\s<>"\'{}|\\^`\]]+|[A-Za-z]:[\\/][^\s<>"\'{}|\\^`\]]+|'
+    r'(?:\.\.?[\\/]|[^:/\\\s<>|]+[\\/])[^\s<>"\'{}|\\^`\]]+)'
 )
 
-# Regex to match local file paths
-LOCAL_FILE_REGEX = re.compile(
-    r'('
-    r'file://[^\s<>"\'{}|\\^`\]]+'
-    r'|[A-Za-z]:[\\/][^\s<>"\'{}|\\^`\]]+'
-    r'|(?:\.\.?[\\/]|[^:/\\\s<>|]+[\\/])[^\s<>"\'{}|\\^`\]]+'
-    r')',
-    re.IGNORECASE
-)
+URL_REGEX = re.compile(URL_PATTERN, re.IGNORECASE)
+LOCAL_FILE_REGEX = re.compile(LOCAL_FILE_PATTERN, re.IGNORECASE)
 
-def get_last_two_path_parts(path):
+# Common prefixes to exclude
+EXCLUDE_PREFIXES = ("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")
+
+def normalize_path(path):
+    """Normalize and extract last two parts of a path."""
     path = urllib.parse.unquote(path)
-    path = path.replace("\\", "/").rstrip("/")
-    parts = path.split("/")
-    return "/".join(parts[-2:]) if len(parts) >= 2 else path
+    return "/".join(path.replace("\\", "/").rstrip("/").split("/")[-2:])
 
-def extract_text_and_links_from_paragraph(paragraph, line_offset=0):
+def extract_links_from_text(text, line_offset, existing_links):
+    """Extract links from plain text."""
+    links = []
+    if not text.strip():
+        return links
+
+    for url in URL_REGEX.findall(text):
+        if url and not any(url in found_url for found_url, _, _, _ in existing_links):
+            clean_url = url.strip()
+            if (LOCAL_FILE_REGEX.match(clean_url) and 
+                not clean_url.lower().startswith(EXCLUDE_PREFIXES)):
+                short_url = normalize_path(clean_url)
+                links.append((short_url, line_offset, "Text", short_url))
+    return links
+
+def process_hyperlink(hyperlink, line_offset, source_type):
+    """Process a single hyperlink object."""
+    try:
+        if not (hyperlink and hasattr(hyperlink, 'address') and hyperlink.address):
+            return None
+
+        url = hyperlink.address.strip()
+        if url.lower().startswith(EXCLUDE_PREFIXES):
+            return None
+
+        short_url = normalize_path(url)
+        display_text = (hyperlink.text.strip() if hasattr(hyperlink, 'text') and hyperlink.text 
+                       else short_url)
+        return (short_url, line_offset, source_type, display_text)
+    except Exception as e:
+        print(f"Warning: Hyperlink error - {e}")
+        return None
+
+def extract_paragraph_links(paragraph, line_offset):
+    """Extract links from a paragraph object."""
     links = []
     text = paragraph.text.strip()
     if not text:
         return links
 
+    # Process hyperlinks
     if hasattr(paragraph, 'hyperlinks'):
         for hyperlink in paragraph.hyperlinks:
-            try:
-                if hyperlink and hasattr(hyperlink, 'address') and hyperlink.address:
-                    url = hyperlink.address.strip()
-                    if not url.lower().startswith(("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")):
-                        short_url = get_last_two_path_parts(url)
-                        display_text = hyperlink.text.strip() if hasattr(hyperlink, 'text') else short_url
-                        links.append((short_url, line_offset, "Hyperlink", display_text))
-            except Exception as e:
-                print(f"Warning: Hyperlink error - {e}")
+            link_data = process_hyperlink(hyperlink, line_offset, "Hyperlink")
+            if link_data:
+                links.append(link_data)
 
-    try:
-        matches = URL_REGEX.findall(text)
-        for url in matches:
-            if url and not any(url in found_url for found_url, _, _, _ in links):
-                clean_url = url.strip()
-                if LOCAL_FILE_REGEX.match(clean_url) and not clean_url.lower().startswith(("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")):
-                    short_url = get_last_two_path_parts(clean_url)
-                    links.append((short_url, line_offset, "Text", short_url))
-    except Exception as e:
-        print(f"Warning: Regex error - {e}")
-
+    # Process text URLs
+    links.extend(extract_links_from_text(text, line_offset, links))
     return links
 
-def extract_links_from_docx(path):
+def extract_docx_links(path):
+    """Extract links from DOCX file."""
     links = []
     try:
         doc = Document(path)
         line_num = 1
 
+        # Process paragraphs
         for para in doc.paragraphs:
-            links.extend(extract_text_and_links_from_paragraph(para, line_num))
+            links.extend(extract_paragraph_links(para, line_num))
             line_num += 1
 
+        # Process tables
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for para in cell.paragraphs:
-                        links.extend(extract_text_and_links_from_paragraph(para, line_num))
+                        links.extend(extract_paragraph_links(para, line_num))
                         line_num += 1
 
+        # Process headers and footers
         for section in doc.sections:
             for part in (section.header, section.footer):
-                if part is not None:
+                if part:
                     for para in part.paragraphs:
-                        links.extend(extract_text_and_links_from_paragraph(para, -1))
+                        links.extend(extract_paragraph_links(para, -1))
 
     except Exception as e:
         raise Exception(f"DOCX error: {e}")
     return links
 
-def extract_links_from_doc(path):
+def extract_doc_links(path):
+    """Extract links from DOC file using COM interface."""
     links = []
-    word = None
-    doc = None
+    word = doc = None
     try:
         word = client.Dispatch("Word.Application")
         word.Visible = False
         doc = word.Documents.Open(os.path.abspath(path), ReadOnly=True, Visible=False)
 
+        # Process paragraphs
         for i, para in enumerate(doc.Paragraphs, 1):
             text = para.Range.Text.strip()
             if not text:
                 continue
 
+            # Process hyperlinks
             if hasattr(para.Range, 'Hyperlinks'):
                 for hyperlink in para.Range.Hyperlinks:
-                    try:
-                        if hyperlink and hasattr(hyperlink, 'Address') and hyperlink.Address:
-                            url = hyperlink.Address.strip()
-                            if not url.lower().startswith(("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")):
-                                short_url = get_last_two_path_parts(url)
-                                display_text = hyperlink.TextToDisplay.strip() if hasattr(hyperlink, 'TextToDisplay') else short_url
-                                links.append((short_url, i, "Hyperlink", display_text))
-                    except Exception as e:
-                        print(f"Warning: Hyperlink error - {e}")
+                    link_data = process_hyperlink(hyperlink, i, "Hyperlink")
+                    if link_data:
+                        links.append(link_data)
 
-            matches = URL_REGEX.findall(text)
-            for url in matches:
-                if url and not any(url in found_url for found_url, _, _, _ in links):
-                    clean_url = url.strip()
-                    if LOCAL_FILE_REGEX.match(clean_url) and not clean_url.lower().startswith(("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")):
-                        short_url = get_last_two_path_parts(clean_url)
-                        links.append((short_url, i, "Text", short_url))
+            # Process text URLs
+            links.extend(extract_links_from_text(text, i, links))
 
+        # Process headers and footers
         for section in doc.Sections:
             for hf in [section.Headers(1), section.Footers(1)]:
-                try:
-                    if hf:
-                        text = hf.Range.Text.strip()
-                        if not text:
-                            continue
+                if hf:
+                    text = hf.Range.Text.strip()
+                    if text:
+                        # Process hyperlinks
                         if hasattr(hf.Range, 'Hyperlinks'):
                             for hyperlink in hf.Range.Hyperlinks:
                                 if hyperlink and hasattr(hyperlink, 'Address') and hyperlink.Address:
                                     url = hyperlink.Address.strip()
-                                    short_url = get_last_two_path_parts(url)
+                                    short_url = normalize_path(url)
                                     links.append((short_url, -1, "Hyperlink", short_url))
 
-                        matches = URL_REGEX.findall(text)
-                        for url in matches:
-                            if url and not any(url in found_url for found_url, _, _, _ in links):
-                                clean_url = url.strip()
-                                short_url = get_last_two_path_parts(clean_url)
-                                links.append((short_url, -1, "Text", short_url))
-                except Exception as e:
-                    print(f"Warning: Header/Footer error - {e}")
+                        # Process text URLs
+                        links.extend(extract_links_from_text(text, -1, links))
 
+        # Process shapes
         if hasattr(doc, 'InlineShapes'):
             for shape in doc.InlineShapes:
                 try:
-                    if shape and hasattr(shape, 'Hyperlink') and shape.Hyperlink and shape.Hyperlink.Address:
+                    if (shape and hasattr(shape, 'Hyperlink') and 
+                       shape.Hyperlink and shape.Hyperlink.Address):
                         url = shape.Hyperlink.Address.strip()
-                        short_url = get_last_two_path_parts(url)
+                        short_url = normalize_path(url)
                         links.append((short_url, -1, "Shape Hyperlink", short_url))
                 except Exception as e:
                     print(f"Warning: Shape hyperlink error - {e}")
@@ -169,18 +173,18 @@ def extract_links_from_doc(path):
             word.Quit()
     return links
 
-def find_all_links(base_path):
+def scan_documents(base_path):
+    """Scan all DOC/DOCX files in the given path."""
     file_links = {}
     error_files = []
-    total_links = 0
-    file_count = 0
+    file_count = total_links = 0
 
     print(f"\nScanning: {base_path}\n")
 
     for root, _, files in os.walk(base_path):
         for file in files:
             ext = os.path.splitext(file)[1].lower()
-            if ext not in [".doc", ".docx"]:
+            if ext not in (".doc", ".docx"):
                 continue
 
             full_path = os.path.join(root, file)
@@ -188,11 +192,9 @@ def find_all_links(base_path):
             print(f"[{file_count}] Processing: {full_path}")
 
             try:
-                if ext == ".docx":
-                    links = extract_links_from_docx(full_path)
-                else:
-                    links = extract_links_from_doc(full_path)
-
+                extractor = extract_docx_links if ext == ".docx" else extract_doc_links
+                links = extractor(full_path)
+                
                 if links:
                     file_links[full_path] = links
                     total_links += len(links)
@@ -202,16 +204,16 @@ def find_all_links(base_path):
 
     return file_links, error_files, total_links
 
-if __name__ == "__main__":
+def main():
+    """Main execution function."""
     try:
         base_path = input("Enter the base folder path: ").strip()
         if not os.path.exists(base_path):
             print("Error: Path does not exist.")
             sys.exit(1)
 
-        output_file = "word_links_report.html"
         print("\nExtracting links...")
-        links, errors, total = find_all_links(base_path)
+        links, errors, total = scan_documents(base_path)
 
         print("\nAll Extracted Links:")
         for file_path, file_links in links.items():
@@ -224,11 +226,13 @@ if __name__ == "__main__":
             for file_path, error in errors:
                 print(f"  {file_path}: {error}")
 
-        print(f"\nTotal local file links found: {total}")
-        print("\nDone!")
+        print(f"\nTotal local file links found: {total}\nDone!")
     except KeyboardInterrupt:
         print("\nCancelled by user.")
         sys.exit(0)
     except Exception as e:
         print(f"\nError: {str(e)}")
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()
