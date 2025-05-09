@@ -34,11 +34,3 @@ def scan_and_update_documents(base_path): processed_files = 0 updated_files = 0 
 
 if name == "main": if len(sys.argv) != 2: print("Usage: python script.py <folder_path>") sys.exit(1) base_path = sys.argv[1] if not os.path.isdir(base_path): print(f"Error: {base_path} is not a valid directory.") sys.exit(1) scan_and_update_documents(base_path)
 
-if __name__ == "__main__":
-    folder_path = input("Enter the folder path to scan and update Word documents: ").strip()
-
-    if not folder_path or not os.path.exists(folder_path):
-        print("Invalid path. Please provide a valid directory.")
-        sys.exit(1)
-
-    scan_and_update_documents(folder_path)
