@@ -22,6 +22,12 @@ URL_REGEX = re.compile(URL_PATTERN, re.IGNORECASE)
 LOCAL_FILE_REGEX = re.compile(LOCAL_FILE_PATTERN, re.IGNORECASE)
 EXCLUDE_PREFIXES = ("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")
 
+def get_last_two_path_parts(path):
+    path = urllib.parse.unquote(path)
+    path = path.replace("\\", "/").rstrip("/")
+    parts = path.split("/")
+    return "/".join(parts[-2:]) if len(parts) >= 2 else path
+
 log_entries = []
 
 def log(message):
@@ -45,7 +51,7 @@ def fetch_qms_file_id(filepath):
     try:
         conn = pyodbc.connect(dbConnectionString)
         cursor = conn.cursor()
-        normalized_path = filepath.replace("\\", "/").lower()
+        normalized_path = get_last_two_path_parts(filepath)
         cursor.execute("""
             SELECT TOP 1 encryptedDocId FROM QMS_DocIds_Import01 
             WHERE filepath LIKE ?
