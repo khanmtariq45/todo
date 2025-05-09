@@ -5,6 +5,7 @@ import urllib.parse
 from datetime import datetime
 from docx import Document
 from win32com import client
+import pyodbc
 
 # Combined regex patterns
 URL_PATTERN = (
@@ -17,11 +18,52 @@ LOCAL_FILE_PATTERN = (
     r'(?:\.\.?[\\/]|[^:/\\\s<>|]+[\\/])[^\s<>"\'{}|\\^`\]]+)'
 )
 
+def get_last_two_path_parts(path):
+    path = urllib.parse.unquote(path)
+    path = path.replace("\\", "/").rstrip("/")
+    parts = path.split("/")
+    return "/".join(parts[-2:]) if len(parts) >= 2 else path
+
 URL_REGEX = re.compile(URL_PATTERN, re.IGNORECASE)
 LOCAL_FILE_REGEX = re.compile(LOCAL_FILE_PATTERN, re.IGNORECASE)
 
 # Common prefixes to exclude
 EXCLUDE_PREFIXES = ("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")
+
+def fetch_qms_file_id(filepath):
+    dbConnectionString = (
+        "DRIVER={ODBC Driver 17 for SQL Server};"
+        "SERVER=dev.c5owyuw64shd.ap-south-1.rds.amazonaws.com,1982;"
+        "DATABASE=JIBE_Main;"
+        "UID=j2;"
+        "PWD=123456;"
+        "Max Pool Size=200;"
+    )
+
+    try:
+        conn = pyodbc.connect(dbConnectionString)
+        cursor = conn.cursor()
+
+        query = """
+            SELECT TOP 1 encryptedDocId
+            FROM QMS_DocIds_Import01 
+            WHERE filepath LIKE ?
+        """
+        cursor.execute(query, f"%{filepath}%")
+        row = cursor.fetchone()
+
+        return row.encryptedDocId if row else None
+
+    except Exception as e:
+        print("Error:", e)
+        return None
+
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except:
+            pass
 
 def normalize_path(path):
     """Normalize and extract last two parts of a path."""
@@ -219,7 +261,8 @@ def main():
         for file_path, file_links in links.items():
             print(f"\nFile: {file_path}")
             for url, line, source, display in file_links:
-                print(f"  [{source}] Line {line}: {display} -> {url}")
+                encryptedDocId = fetch_qms_file_id(url)
+                print(f"  [{source}] Line {line}: {display} -> {url} -> encryptedDocId {encryptedDocId}")
 
         if errors:
             print("\nErrors encountered:")
