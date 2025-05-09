@@ -1,13 +1,3 @@
-this code is giving me all links like 
-
-[Hyperlink] Line 4: Link1 -> mailto:tariq@gmail.com
-  [Hyperlink] Line 6: Link3 -> ../../../Desktop/testing code/EPSManualsWeb2024.05 Full/EPS Form File/OFC - Office Form Crew/OFC08 - Senior Officers Briefing Booklet.doc
-  [Hyperlink] Line 9: www.google.com -> http://www.google.com/
-  [Hyperlink] Line 11: Link3 -> http://www.google.com/
-
-
-but I want links which are relevant or abosulte path no other links are needed 
-
 import os
 import re
 import sys
@@ -15,18 +5,25 @@ from datetime import datetime
 from docx import Document
 from win32com import client
 
-URL_REGEX = re.compile(
+# Include file:// and relative/absolute paths, exclude web/mail/tel links
+LOCAL_FILE_REGEX = re.compile(
     r'('
-    r'https?://[^\s<>"\'{}|\\^`[]+'
-    r'|www\.[^\s<>"\'{}|\\^`[]+'
-    r'|ftp://[^\s<>"\'{}|\\^`[]+'
-    r'|mailto:[^\s<>"\'{}|\\^`[]+'
-    r'|\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b'
-    r'|file://[^\s<>"\'{}|\\^`[]+'
-    r'|tel:[^\s<>"\'{}|\\^`[]+'
+    r'file://[^\s<>"\'{}|\\^`[\]]+'  # file:// style links
+    r'|[A-Za-z]:[\\/][^\s<>"\'{}|\\^`[\]]+'  # Windows absolute paths
+    r'|(?:\.\.?[\\/]|[^:/\\\s<>|]+[\\/])[^\s<>"\'{}|\\^`[\]]+'  # relative paths with folder or ./../
     r')',
     re.IGNORECASE
 )
+
+EXCLUDED_PREFIXES = ('http://', 'https://', 'mailto:', 'ftp://', 'tel:', 'www.')
+
+def is_local_file_link(url: str):
+    url = url.strip()
+    return (
+        url.startswith('file://')
+        or re.match(r'^[a-zA-Z]:[\\/]', url)  # C:\ or D:\
+        or re.match(r'^(\.\.?[\\/]|[^:/\\\s<>|]+[\\/])', url)  # ./, ../, folder/
+    ) and not url.lower().startswith(EXCLUDED_PREFIXES)
 
 def extract_text_and_links_from_paragraph(paragraph, line_offset=0):
     links = []
@@ -34,22 +31,24 @@ def extract_text_and_links_from_paragraph(paragraph, line_offset=0):
     if not text:
         return links
 
+    # From real hyperlink objects (docx)
     if hasattr(paragraph, 'hyperlinks'):
         for hyperlink in paragraph.hyperlinks:
             try:
                 if hyperlink and hasattr(hyperlink, 'address') and hyperlink.address:
                     clean_url = hyperlink.address.strip()
-                    display_text = hyperlink.text.strip() if hasattr(hyperlink, 'text') else clean_url
-                    links.append((clean_url, line_offset, "Hyperlink", display_text))
+                    if is_local_file_link(clean_url):
+                        display_text = hyperlink.text.strip() if hasattr(hyperlink, 'text') else clean_url
+                        links.append((clean_url, line_offset, "Hyperlink", display_text))
             except Exception as e:
                 print(f"Warning: Hyperlink error - {e}")
 
+    # From visible text using regex
     try:
-        matches = URL_REGEX.findall(text)
+        matches = LOCAL_FILE_REGEX.findall(text)
         for url in matches:
-            if url and not any(url in found_url for found_url, _, _, _ in links):
-                clean_url = url.strip()
-                links.append((clean_url, line_offset, "Text", clean_url))
+            if is_local_file_link(url) and not any(url in found_url for found_url, _, _, _ in links):
+                links.append((url.strip(), line_offset, "Text", url.strip()))
     except Exception as e:
         print(f"Warning: Regex error - {e}")
 
@@ -101,16 +100,16 @@ def extract_links_from_doc(path):
                     try:
                         if hyperlink and hasattr(hyperlink, 'Address') and hyperlink.Address:
                             clean_url = hyperlink.Address.strip()
-                            display_text = hyperlink.TextToDisplay.strip() if hasattr(hyperlink, 'TextToDisplay') else clean_url
-                            links.append((clean_url, i, "Hyperlink", display_text))
+                            if is_local_file_link(clean_url):
+                                display_text = hyperlink.TextToDisplay.strip() if hasattr(hyperlink, 'TextToDisplay') else clean_url
+                                links.append((clean_url, i, "Hyperlink", display_text))
                     except Exception as e:
                         print(f"Warning: Hyperlink error - {e}")
 
-            matches = URL_REGEX.findall(text)
+            matches = LOCAL_FILE_REGEX.findall(text)
             for url in matches:
-                if url and not any(url in found_url for found_url, _, _, _ in links):
-                    clean_url = url.strip()
-                    links.append((clean_url, i, "Text", clean_url))
+                if is_local_file_link(url) and not any(url in found_url for found_url, _, _, _ in links):
+                    links.append((url.strip(), i, "Text", url.strip()))
 
         for section in doc.Sections:
             for hf in [section.Headers(1), section.Footers(1)]:
@@ -123,14 +122,14 @@ def extract_links_from_doc(path):
                             for hyperlink in hf.Range.Hyperlinks:
                                 if hyperlink and hasattr(hyperlink, 'Address') and hyperlink.Address:
                                     clean_url = hyperlink.Address.strip()
-                                    display_text = hyperlink.TextToDisplay.strip() if hasattr(hyperlink, 'TextToDisplay') else clean_url
-                                    links.append((clean_url, -1, "Hyperlink", display_text))
+                                    if is_local_file_link(clean_url):
+                                        display_text = hyperlink.TextToDisplay.strip() if hasattr(hyperlink, 'TextToDisplay') else clean_url
+                                        links.append((clean_url, -1, "Hyperlink", display_text))
 
-                        matches = URL_REGEX.findall(text)
+                        matches = LOCAL_FILE_REGEX.findall(text)
                         for url in matches:
-                            if url and not any(url in found_url for found_url, _, _, _ in links):
-                                clean_url = url.strip()
-                                links.append((clean_url, -1, "Text", clean_url))
+                            if is_local_file_link(url) and not any(url in found_url for found_url, _, _, _ in links):
+                                links.append((url.strip(), -1, "Text", url.strip()))
                 except Exception as e:
                     print(f"Warning: Header/Footer error - {e}")
 
@@ -139,8 +138,9 @@ def extract_links_from_doc(path):
                 try:
                     if shape and hasattr(shape, 'Hyperlink') and shape.Hyperlink and shape.Hyperlink.Address:
                         clean_url = shape.Hyperlink.Address.strip()
-                        display_text = clean_url
-                        links.append((clean_url, -1, "Shape Hyperlink", display_text))
+                        if is_local_file_link(clean_url):
+                            display_text = clean_url
+                            links.append((clean_url, -1, "Shape Hyperlink", display_text))
                 except Exception as e:
                     print(f"Warning: Shape hyperlink error - {e}")
 
@@ -193,11 +193,10 @@ if __name__ == "__main__":
             print("Error: Path does not exist.")
             sys.exit(1)
 
-        output_file = "word_links_report.html"
         print("\nExtracting links...")
         links, errors, total = find_all_links(base_path)
 
-        print("\nAll Extracted Links:")
+        print("\nAll Local File Links:")
         for file_path, file_links in links.items():
             print(f"\nFile: {file_path}")
             for url, line, source, display in file_links:
@@ -208,7 +207,7 @@ if __name__ == "__main__":
             for file_path, error in errors:
                 print(f"  {file_path}: {error}")
 
-        print(f"\nTotal links found: {total}")
+        print(f"\nTotal local file links found: {total}")
         print("\nDone!")
     except KeyboardInterrupt:
         print("\nCancelled by user.")
