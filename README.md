@@ -6,19 +6,6 @@ from datetime import datetime
 from docx import Document
 from win32com import client
 
-# Regex for matching all hyperlinks
-URL_REGEX = re.compile(
-    r'('
-    r'https?://[^\s<>"\'{}|\\^`[]+'
-    r'|www\.[^\s<>"\'{}|\\^`[]+'
-    r'|ftp://[^\s<>"\'{}|\\^`[]+'
-    r'|mailto:[^\s<>"\'{}|\\^`[]+'
-    r'|file://[^\s<>"\'{}|\\^`[]+'
-    r'|tel:[^\s<>"\'{}|\\^`[]+'
-    r')',
-    re.IGNORECASE
-)
-
 # Regex to match local file paths
 LOCAL_FILE_REGEX = re.compile(
     r'('
@@ -29,11 +16,14 @@ LOCAL_FILE_REGEX = re.compile(
     re.IGNORECASE
 )
 
-def get_last_two_path_parts(path):
-    path = urllib.parse.unquote(path)
-    path = path.replace("\\", "/").rstrip("/")
-    parts = path.split("/")
-    return "/".join(parts[-2:]) if len(parts) >= 2 else path
+def clean_file_path(raw_path):
+    if raw_path.lower().startswith("file://"):
+        raw_path = raw_path[7:]
+
+    raw_path = urllib.parse.unquote(raw_path)
+    raw_path = raw_path.replace("\\", "/")
+    parts = raw_path.strip("/").split("/")
+    return "/".join(parts[-2:]) if len(parts) >= 2 else raw_path
 
 def extract_text_and_links_from_paragraph(paragraph, line_offset=0):
     links = []
@@ -47,20 +37,18 @@ def extract_text_and_links_from_paragraph(paragraph, line_offset=0):
                 if hyperlink and hasattr(hyperlink, 'address') and hyperlink.address:
                     url = hyperlink.address.strip()
                     if not url.lower().startswith(("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")):
-                        short_url = get_last_two_path_parts(url)
-                        display_text = hyperlink.text.strip() if hasattr(hyperlink, 'text') else short_url
-                        links.append((short_url, line_offset, "Hyperlink", display_text))
+                        display_text = hyperlink.text.strip() if hasattr(hyperlink, 'text') else url
+                        clean_path = clean_file_path(url)
+                        links.append((clean_path, line_offset, "Hyperlink", display_text))
             except Exception as e:
                 print(f"Warning: Hyperlink error - {e}")
 
     try:
-        matches = URL_REGEX.findall(text)
+        matches = LOCAL_FILE_REGEX.findall(text)
         for url in matches:
-            if url and not any(url in found_url for found_url, _, _, _ in links):
-                clean_url = url.strip()
-                if LOCAL_FILE_REGEX.match(clean_url) and not clean_url.lower().startswith(("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")):
-                    short_url = get_last_two_path_parts(clean_url)
-                    links.append((short_url, line_offset, "Text", short_url))
+            clean_path = clean_file_path(url)
+            if not any(clean_path in found_url for found_url, _, _, _ in links):
+                links.append((clean_path, line_offset, "Text", clean_path))
     except Exception as e:
         print(f"Warning: Regex error - {e}")
 
@@ -113,19 +101,17 @@ def extract_links_from_doc(path):
                         if hyperlink and hasattr(hyperlink, 'Address') and hyperlink.Address:
                             url = hyperlink.Address.strip()
                             if not url.lower().startswith(("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")):
-                                short_url = get_last_two_path_parts(url)
-                                display_text = hyperlink.TextToDisplay.strip() if hasattr(hyperlink, 'TextToDisplay') else short_url
-                                links.append((short_url, i, "Hyperlink", display_text))
+                                display_text = hyperlink.TextToDisplay.strip() if hasattr(hyperlink, 'TextToDisplay') else url
+                                clean_path = clean_file_path(url)
+                                links.append((clean_path, i, "Hyperlink", display_text))
                     except Exception as e:
                         print(f"Warning: Hyperlink error - {e}")
 
-            matches = URL_REGEX.findall(text)
+            matches = LOCAL_FILE_REGEX.findall(text)
             for url in matches:
-                if url and not any(url in found_url for found_url, _, _, _ in links):
-                    clean_url = url.strip()
-                    if LOCAL_FILE_REGEX.match(clean_url) and not clean_url.lower().startswith(("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")):
-                        short_url = get_last_two_path_parts(clean_url)
-                        links.append((short_url, i, "Text", short_url))
+                clean_path = clean_file_path(url)
+                if not any(clean_path in found_url for found_url, _, _, _ in links):
+                    links.append((clean_path, i, "Text", clean_path))
 
         for section in doc.Sections:
             for hf in [section.Headers(1), section.Footers(1)]:
@@ -137,16 +123,15 @@ def extract_links_from_doc(path):
                         if hasattr(hf.Range, 'Hyperlinks'):
                             for hyperlink in hf.Range.Hyperlinks:
                                 if hyperlink and hasattr(hyperlink, 'Address') and hyperlink.Address:
-                                    url = hyperlink.Address.strip()
-                                    short_url = get_last_two_path_parts(url)
-                                    links.append((short_url, -1, "Hyperlink", short_url))
+                                    clean_path = clean_file_path(hyperlink.Address.strip())
+                                    display_text = clean_path
+                                    links.append((clean_path, -1, "Hyperlink", display_text))
 
-                        matches = URL_REGEX.findall(text)
+                        matches = LOCAL_FILE_REGEX.findall(text)
                         for url in matches:
-                            if url and not any(url in found_url for found_url, _, _, _ in links):
-                                clean_url = url.strip()
-                                short_url = get_last_two_path_parts(clean_url)
-                                links.append((short_url, -1, "Text", short_url))
+                            clean_path = clean_file_path(url)
+                            if not any(clean_path in found_url for found_url, _, _, _ in links):
+                                links.append((clean_path, -1, "Text", clean_path))
                 except Exception as e:
                     print(f"Warning: Header/Footer error - {e}")
 
@@ -154,9 +139,9 @@ def extract_links_from_doc(path):
             for shape in doc.InlineShapes:
                 try:
                     if shape and hasattr(shape, 'Hyperlink') and shape.Hyperlink and shape.Hyperlink.Address:
-                        url = shape.Hyperlink.Address.strip()
-                        short_url = get_last_two_path_parts(url)
-                        links.append((short_url, -1, "Shape Hyperlink", short_url))
+                        clean_path = clean_file_path(shape.Hyperlink.Address.strip())
+                        display_text = clean_path
+                        links.append((clean_path, -1, "Shape Hyperlink", display_text))
                 except Exception as e:
                     print(f"Warning: Shape hyperlink error - {e}")
 
@@ -209,7 +194,6 @@ if __name__ == "__main__":
             print("Error: Path does not exist.")
             sys.exit(1)
 
-        output_file = "word_links_report.html"
         print("\nExtracting links...")
         links, errors, total = find_all_links(base_path)
 
