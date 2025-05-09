@@ -283,6 +283,7 @@ def scan_and_update_documents(base_path):
                 continue
             full_path = os.path.join(root, file)
             processed += 1
+            print(f"Processing: {full_path}")
             log(f"Processing [{processed}]: {full_path}")
             try:
                 extractor = extract_docx_links if ext == ".docx" else extract_doc_links
