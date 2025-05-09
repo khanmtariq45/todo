@@ -1,3 +1,5 @@
+Now I want filepath which was present to be replace with "#\qms?DocId=D01A1BE2EA12D04F36B5FAD66BFD8D12" here docId is encryptedDocId which we need to get from db and update in doc and docx
+
 import os
 import re
 import sys
