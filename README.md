@@ -1,3 +1,34 @@
+[2025-05-12 14:41:37] Starting scan in: C:\Users\MuhammadTariqPKDev\Downloads\Convert Data\New folder
+[2025-05-12 14:41:37] Processing [1]: C:\Users\MuhammadTariqPKDev\Downloads\Convert Data\New folder\SA07 Risk Matrix.docx
+[2025-05-12 14:41:40] Found encrypted ID for SA07%20Consequence%20Category%20Table.pdf => 6EC2798F7A9C498F712EF560846A20E6
+[2025-05-12 14:41:40] Prepared replacement for SA07%20Consequence%20Category%20Table.pdf => #\qms?DocId=6EC2798F7A9C498F712EF560846A20E6 (Display Name: CONSEQUENCES)
+[2025-05-12 14:41:41] Found encrypted ID for SA07%20Consequence%20Category%20Table.pdf => 6EC2798F7A9C498F712EF560846A20E6
+[2025-05-12 14:41:41] Prepared replacement for SA07%20Consequence%20Category%20Table.pdf => #\qms?DocId=6EC2798F7A9C498F712EF560846A20E6 (Display Name: CONSEQUENCES)
+[2025-05-12 14:41:42] Found encrypted ID for SA07%20Consequence%20Category%20Table.pdf => 6EC2798F7A9C498F712EF560846A20E6
+[2025-05-12 14:41:42] Prepared replacement for SA07%20Consequence%20Category%20Table.pdf => #\qms?DocId=6EC2798F7A9C498F712EF560846A20E6 (Display Name: CONSEQUENCES)
+[2025-05-12 14:41:45] Found encrypted ID for SA07%20Consequence%20Category%20Table.pdf => 6EC2798F7A9C498F712EF560846A20E6
+[2025-05-12 14:41:45] Prepared replacement for SA07%20Consequence%20Category%20Table.pdf => #\qms?DocId=6EC2798F7A9C498F712EF560846A20E6 (Display Name: CONSEQUENCES)
+[2025-05-12 14:41:47] Found encrypted ID for SA07%20Consequence%20Category%20Table.pdf => 6EC2798F7A9C498F712EF560846A20E6
+[2025-05-12 14:41:47] Prepared replacement for SA07%20Consequence%20Category%20Table.pdf => #\qms?DocId=6EC2798F7A9C498F712EF560846A20E6 (Display Name: CONSEQUENCES)
+[2025-05-12 14:41:48] Found encrypted ID for SA07%20Hazard%20Probability%20Rating%20Table.pdf => E95880F1459DE62596472316E3A159EC
+[2025-05-12 14:41:48] Prepared replacement for SA07%20Hazard%20Probability%20Rating%20Table.pdf => #\qms?DocId=E95880F1459DE62596472316E3A159EC (Display Name: INITIAL PROBABILITY)
+[2025-05-12 14:41:49] Found encrypted ID for SA07%20Hazard%20Probability%20Rating%20Table.pdf => E95880F1459DE62596472316E3A159EC
+[2025-05-12 14:41:49] Prepared replacement for SA07%20Hazard%20Probability%20Rating%20Table.pdf => #\qms?DocId=E95880F1459DE62596472316E3A159EC (Display Name: INITIAL PROBABILITY)
+[2025-05-12 14:41:52] Found encrypted ID for SA07%20Hazard%20Probability%20Rating%20Table.pdf => E95880F1459DE62596472316E3A159EC
+[2025-05-12 14:41:52] Prepared replacement for SA07%20Hazard%20Probability%20Rating%20Table.pdf => #\qms?DocId=E95880F1459DE62596472316E3A159EC (Display Name: INITIAL PROBABILITY)
+[2025-05-12 14:41:53] Found encrypted ID for SA07%20Hazard%20Probability%20Rating%20Table.pdf => E95880F1459DE62596472316E3A159EC
+[2025-05-12 14:41:53] Prepared replacement for SA07%20Hazard%20Probability%20Rating%20Table.pdf => #\qms?DocId=E95880F1459DE62596472316E3A159EC (Display Name: INITIAL PROBABILITY)
+[2025-05-12 14:41:54] Found encrypted ID for SA07%20Hazard%20Probability%20Rating%20Table.pdf => E95880F1459DE62596472316E3A159EC
+[2025-05-12 14:41:54] Prepared replacement for SA07%20Hazard%20Probability%20Rating%20Table.pdf => #\qms?DocId=E95880F1459DE62596472316E3A159EC (Display Name: INITIAL PROBABILITY)
+[2025-05-12 14:41:54] Updating hyperlink in paragraph: SA07%20Consequence%20Category%20Table.pdf => #\qms?DocId=6EC2798F7A9C498F712EF560846A20E6
+[2025-05-12 14:41:54] Error updating DOCX file C:\Users\MuhammadTariqPKDev\Downloads\Convert Data\New folder\SA07 Risk Matrix.docx: property 'address' of 'Hyperlink' object has no setter
+[2025-05-12 14:41:54] === Scan Complete ===
+[2025-05-12 14:41:54] Processed files: 1
+[2025-05-12 14:41:54] Updated files: 0
+[2025-05-12 14:41:54] Total replacements: 0
+[2025-05-12 14:41:54] HTML report generated: link_update_report.html
+
+
 import os
 import re
 import sys
@@ -13,13 +44,18 @@ URL_PATTERN = (
     r'ftp://[^\s<>"\'{}|\\^`[]+|mailto:[^\s<>"\'{}|\\^`[]+|'
     r'file://[^\s<>"\'{}|\\^`[]+|tel:[^\s<>"\'{}|\\^`[]+)'
 )
-LOCAL_FILE_PATTERN = (
-    r'(file://[^\s<>"\'{}|\\^`\]]+|[A-Za-z]:[\\/][^\s<>"\'{}|\\^`\]]+|'
-    r'(?:\.\.?[\\/]|[^:/\\\s<>|]+[\\/])[^\s<>"\'{}|\\^`\]]+)'
+
+LOCAL_FILE_REGEX = re.compile(
+    r'('
+    r'file://[^\s<>"\'{}|\\^`\]]+'  # file:// URLs
+    r'|[A-Za-z]:\\/*[^<>:"/\\|?*\r\n]*'  # Windows absolute paths
+    r'|(?:\.\.?[\\/]|[^:/\\\s<>|]+[\\/])(?:[^<>:"/\\|?*\r\n]+[\\/])*[^<>:"/\\|?*\r\n]*'  # Relative paths
+    r'|[^<>:"/\\|?*\r\n]+\.(?:pdf|docx?|xlsx?|pptx?|txt|csv|jpg|png|zip)'  # Standalone filenames with common extensions
+    r')',
+    re.IGNORECASE
 )
 
 URL_REGEX = re.compile(URL_PATTERN, re.IGNORECASE)
-LOCAL_FILE_REGEX = re.compile(LOCAL_FILE_PATTERN, re.IGNORECASE)
 EXCLUDE_PREFIXES = ("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")
 
 def get_last_two_path_parts(path):
@@ -34,9 +70,9 @@ def log(message):
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     log_entries.append(f"[{timestamp}] {message}")
 
-# def write_log_to_file():
-#     with open("link_update_log.txt", "w", encoding="utf-8") as log_file:
-#         log_file.write("\n".join(log_entries))
+def write_log_to_file():
+    with open("link_update_log.txt", "w", encoding="utf-8") as log_file:
+        log_file.write("\n".join(log_entries))
 
 def fetch_qms_file_id(filepath):
     dbConnectionString = (
@@ -70,8 +106,8 @@ def fetch_qms_file_id(filepath):
             pass
 
 def is_local_file_url(url):
-    url = url.strip().lower()
-    return (LOCAL_FILE_REGEX.match(url) and not url.startswith(EXCLUDE_PREFIXES))
+    url = url.strip()
+    return LOCAL_FILE_REGEX.match(url) and not url.lower().startswith(("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www."))
 
 def get_qms_replacement(url):
     encrypted_doc_id = fetch_qms_file_id(url)
@@ -82,7 +118,7 @@ def get_qms_replacement(url):
         log(f"No encrypted ID found for {url}")
     return None
 
-def process_hyperlink(hyperlink, line_offset, source_type):
+def process_hyperlink(hyperlink, line_offset, source_type, file_path):
     try:
         if not (hyperlink and hasattr(hyperlink, 'address') and hyperlink.address):
             return None
@@ -95,7 +131,7 @@ def process_hyperlink(hyperlink, line_offset, source_type):
             return None
         display_text = (hyperlink.text.strip() if hasattr(hyperlink, 'text') and hyperlink.text 
                         else replacement)
-        log(f"Prepared replacement: {url} => {replacement}")
+        log(f"Prepared replacement for {url} => {replacement} (Display Name: {display_text})")
         return (url, replacement, line_offset, source_type, display_text)
     except Exception as e:
         log(f"Hyperlink processing error: {e}")
@@ -113,14 +149,14 @@ def extract_links_from_text(text, line_offset, existing_links):
                     links.append((url, replacement, line_offset, "Text", replacement))
     return links
 
-def extract_paragraph_links(paragraph, line_offset):
+def extract_paragraph_links(paragraph, line_offset, file_path):
     links = []
     text = paragraph.text.strip()
     if not text:
         return links
     if hasattr(paragraph, 'hyperlinks'):
         for hyperlink in paragraph.hyperlinks:
-            link_data = process_hyperlink(hyperlink, line_offset, "Hyperlink")
+            link_data = process_hyperlink(hyperlink, line_offset, "Hyperlink", file_path)
             if link_data:
                 links.append(link_data)
     links.extend(extract_links_from_text(text, line_offset, links))
@@ -130,40 +166,51 @@ def update_docx_file(file_path, links_to_update):
     try:
         doc = Document(file_path)
         updated = False
+
+        # Update hyperlinks and text in paragraphs
         for para in doc.paragraphs:
             if hasattr(para, 'hyperlinks'):
                 for hyperlink in para.hyperlinks:
                     for original, replacement, *_ in links_to_update:
                         if hyperlink.address and original in hyperlink.address:
+                            log(f"Updating hyperlink in paragraph: {original} => {replacement}")
                             hyperlink.address = replacement
                             updated = True
-                            log(f"Updated hyperlink in DOCX: {original} => {replacement}")
             for original, replacement, *_ in links_to_update:
                 if original in para.text:
+                    log(f"Replacing text in paragraph: {original} => {replacement}")
                     para.text = para.text.replace(original, replacement)
                     updated = True
-                    log(f"Replaced text in paragraph: {original} => {replacement}")
+
+        # Update hyperlinks and text in tables
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for para in cell.paragraphs:
                         for original, replacement, *_ in links_to_update:
                             if original in para.text:
+                                log(f"Replacing text in table cell: {original} => {replacement}")
                                 para.text = para.text.replace(original, replacement)
                                 updated = True
-                                log(f"Replaced text in table cell: {original} => {replacement}")
+
+        # Update hyperlinks and text in headers and footers
         for section in doc.sections:
             for part in (section.header, section.footer):
                 if part:
                     for para in part.paragraphs:
                         for original, replacement, *_ in links_to_update:
                             if original in para.text:
+                                log(f"Replacing text in header/footer: {original} => {replacement}")
                                 para.text = para.text.replace(original, replacement)
                                 updated = True
-                                log(f"Replaced text in header/footer: {original} => {replacement}")
+
+        # Save the document if updates were made
         if updated:
             doc.save(file_path)
-            log(f"Saved updated DOCX: {file_path}")
+            log(f"Saved updated DOCX file: {file_path}")
+        else:
+            log(f"No updates made to DOCX file: {file_path}")
+
         return updated
     except Exception as e:
         log(f"Error updating DOCX file {file_path}: {e}")
@@ -176,9 +223,12 @@ def update_doc_file(file_path, links_to_update):
         word.Visible = False
         doc = word.Documents.Open(os.path.abspath(file_path), ReadOnly=False, Visible=False)
         updated = False
+        log(f"Inside of doc updating: {file_path}")
         for para in doc.Paragraphs:
             text = para.Range.Text.strip()
+            log(f"Inside of para text: {text}")
             for original, replacement, *_ in links_to_update:
+                log(f"Updating DOC paragraph: {original} => {replacement}")
                 if original in para.Range.Text:
                     para.Range.Text = para.Range.Text.replace(original, replacement)
                     updated = True
@@ -194,6 +244,7 @@ def update_doc_file(file_path, links_to_update):
             for hf in [section.Headers(1), section.Footers(1)]:
                 if hf:
                     for original, replacement, *_ in links_to_update:
+                        log(f"Updating DOC section paragraph: {original} => {replacement}")
                         if original in hf.Range.Text:
                             hf.Range.Text = hf.Range.Text.replace(original, replacement)
                             updated = True
@@ -217,22 +268,31 @@ def extract_docx_links(file_path):
         doc = Document(file_path)
         line_offset = 0
         for para in doc.paragraphs:
-            links.extend(extract_paragraph_links(para, line_offset))
+            links.extend(extract_paragraph_links(para, line_offset, file_path))
+            for link in links:
+                log(f"working with link {link}")
+                if is_local_file_url(link[0]):
+                    replacement = get_qms_replacement(link[0])
+                    if replacement:
+                        # links.append((link[0], replacement, link[2], link[3], replacement))
+                        log(f"it is preparing for {link[0]} => {replacement} (Display Name: {link[4]})")
             line_offset += len(para.text.split('\n'))
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for para in cell.paragraphs:
-                        links.extend(extract_paragraph_links(para, line_offset))
+                        links.extend(extract_paragraph_links(para, line_offset, file_path))
                         line_offset += len(para.text.split('\n'))
         for section in doc.sections:
             for part in (section.header, section.footer):
                 if part:
                     for para in part.paragraphs:
-                        links.extend(extract_paragraph_links(para, line_offset))
+                        links.extend(extract_paragraph_links(para, line_offset, file_path))
                         line_offset += len(para.text.split('\n'))
+    
     except Exception as e:
         log(f"Error extracting links from DOCX {file_path}: {e}")
+        
     return links
 
 def extract_doc_links(file_path):
@@ -248,7 +308,7 @@ def extract_doc_links(file_path):
             if text:
                 if hasattr(para.Range, 'Hyperlinks'):
                     for hyperlink in para.Range.Hyperlinks:
-                        link_data = process_hyperlink(hyperlink, line_offset, "Hyperlink")
+                        link_data = process_hyperlink(hyperlink, line_offset, "Hyperlink", file_path)
                         if link_data:
                             links.append(link_data)
                 links.extend(extract_links_from_text(text, line_offset, links))
@@ -258,7 +318,7 @@ def extract_doc_links(file_path):
                 if hf:
                     if hasattr(hf.Range, 'Hyperlinks'):
                         for hyperlink in hf.Range.Hyperlinks:
-                            link_data = process_hyperlink(hyperlink, line_offset, "Header/Footer")
+                            link_data = process_hyperlink(hyperlink, line_offset, "Header/Footer", file_path)
                             if link_data:
                                 links.append(link_data)
                     links.extend(extract_links_from_text(hf.Range.Text, line_offset, links))
@@ -461,9 +521,14 @@ def scan_and_update_documents(base_path):
     log(f"Starting scan in: {base_path}")
     for root, _, files in os.walk(base_path):
         for file in files:
+            # Skip temporary files
+            if file.startswith("~$"):
+                continue
+
             ext = os.path.splitext(file)[1].lower()
             if ext not in (".doc", ".docx"):
                 continue
+
             full_path = os.path.join(root, file)
             processed += 1
             print(f"Processing: {full_path}")
@@ -474,10 +539,12 @@ def scan_and_update_documents(base_path):
                 if not links:
                     log("No links found.")
                     continue
+
                 replaceable_links = [(orig, repl) for orig, repl, *_ in links if repl]
                 if not replaceable_links:
                     log("No replaceable links found.")
                     continue
+
                 updater = update_docx_file if ext == ".docx" else update_doc_file
                 if updater(full_path, replaceable_links):
                     updated += 1
@@ -485,11 +552,13 @@ def scan_and_update_documents(base_path):
                     log(f"Updated {len(replaceable_links)} links.")
             except Exception as e:
                 log(f"[ERROR] {file}: {e}")
+
     log("=== Scan Complete ===")
     log(f"Processed files: {processed}")
     log(f"Updated files: {updated}")
     log(f"Total replacements: {total_replacements}")
     write_log_to_html()
+    write_log_to_file()
 
 if __name__ == "__main__":
     folder_path = input("Enter folder path: ").strip()
@@ -497,4 +566,4 @@ if __name__ == "__main__":
         print("Invalid folder path.")
         sys.exit(1)
     scan_and_update_documents(folder_path)
-    print("Log written to link_update_report.html")
+    print("Log written to link_update_log.html")
