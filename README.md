@@ -97,7 +97,7 @@ def write_log_to_html():
     <link rel="stylesheet" href="{bootstrap_css}">
     <style>
         body {{
-            font-family: Arial, sans-serif;
+            font-family: Arial, sans-serif; /* Fixed font-family */
             background-color: #f8f9fa;
         }}
         h1 {{
