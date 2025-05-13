@@ -78,7 +78,6 @@ def is_local_file_url(url):
 def get_qms_replacement(url):
     encrypted_doc_id = fetch_qms_file_id(url)
     if encrypted_doc_id:
-        log(f"Found encrypted ID for {url} => {encrypted_doc_id}")
         return f"#\\qms?DocId={encrypted_doc_id}"
     else:
         log(f"No encrypted ID found for {url}")
@@ -500,3 +499,4 @@ if __name__ == "__main__":
         sys.exit(1)
     scan_and_update_documents(folder_path)
     print("Log written to link_update_report.html")
+    print("Processing complete.")
