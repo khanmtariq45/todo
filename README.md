@@ -1,12 +1,12 @@
 import os
 import re
 import sys
+import pyodbc
 import urllib.parse
 from datetime import datetime
 from docx import Document
 from win32com import client
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
-import pyodbc
 from docx.oxml import OxmlElement
 from docx.oxml.shared import qn
 
