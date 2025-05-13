@@ -7,8 +7,6 @@ from datetime import datetime
 from docx import Document
 from win32com import client
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
-from docx.oxml import OxmlElement
-from docx.oxml.shared import qn
 
 # Regex patterns
 URL_PATTERN = (
@@ -16,7 +14,7 @@ URL_PATTERN = (
     r'ftp://[^\s<>"\'{}|\\^`[]+|mailto:[^\s<>"\'{}|\\^`[]+|'
     r'file://[^\s<>"\'{}|\\^`[]+|tel:[^\s<>"\'{}|\\^`[]+)'
 )
- 
+
 LOCAL_FILE_REGEX = re.compile(
     r'('
     r'file://[^\s<>"\'{}|\\^`\]]+'  # file:// URLs
@@ -26,15 +24,9 @@ LOCAL_FILE_REGEX = re.compile(
     r')',
     re.IGNORECASE
 )
- 
+
 URL_REGEX = re.compile(URL_PATTERN, re.IGNORECASE)
 EXCLUDE_PREFIXES = ("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")
-
-def get_last_two_path_parts(path):
-    path = urllib.parse.unquote(path)
-    path = path.replace("\\", "/").rstrip("/")
-    parts = path.split("/")
-    return "/".join(parts[-2:]) if len(parts) >= 2 else path
 
 log_entries = []
 
@@ -42,9 +34,11 @@ def log(message):
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     log_entries.append(f"[{timestamp}] {message}")
 
-def write_log_to_file():
-    with open("link_update_log.txt", "w", encoding="utf-8") as log_file:
-        log_file.write("\n".join(log_entries))
+def get_last_two_path_parts(path):
+    path = urllib.parse.unquote(path)
+    path = path.replace("\\", "/").rstrip("/")
+    parts = path.split("/")
+    return "/".join(parts[-2:]) if len(parts) >= 2 else path
 
 def fetch_qms_file_id(filepath):
     dbConnectionString = (
@@ -86,7 +80,6 @@ def get_qms_replacement(url):
     if encrypted_doc_id:
         log(f"Found encrypted ID for {url} => {encrypted_doc_id}")
         return f"#\\qms?DocId={encrypted_doc_id}"
-
     else:
         log(f"No encrypted ID found for {url}")
     return None
@@ -137,21 +130,18 @@ def extract_paragraph_links(paragraph, line_offset, file_path):
 
 def update_hyperlink_relationships(doc, old_url, new_url, para, display_text=None):
     updated = False
-    
-    # Step 1: Update hyperlink relationship
+
     for rel in doc.part.rels.values():
         if rel.reltype == RT.HYPERLINK and rel.target_ref == old_url:
             rel._target = new_url
             updated = True
 
-    # Step 2: Update the field code in the paragraph XML
     for run in para.runs:
         if old_url in run.text:
             run.text = run.text.replace(old_url, new_url)
             updated = True
 
     return updated
-
 
 def update_docx_file(file_path, links_to_update):
     try:
@@ -171,13 +161,11 @@ def update_docx_file(file_path, links_to_update):
                             if update_hyperlink_relationships(doc, original, replacement, para):
                                 updated = True
 
-            # Then handle text replacements
             for original, replacement, *_ in links_to_update:
                 if original in para.text:
                     para.text = para.text.replace(original, replacement)
                     updated = True
 
-        # Process tables (ensure we update hyperlink text in tables too)
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
@@ -194,13 +182,11 @@ def update_docx_file(file_path, links_to_update):
                                         if update_hyperlink_relationships(doc, original, replacement, para):
                                             updated = True
 
-                        # Text replacements
                         for original, replacement, *_ in links_to_update:
                             if original in para.text:
                                 para.text = para.text.replace(original, replacement)
                                 updated = True
 
-        # Process headers and footers
         for section in doc.sections:
             for part in (section.header, section.footer):
                 if part:
@@ -218,7 +204,6 @@ def update_docx_file(file_path, links_to_update):
                                         if update_hyperlink_relationships(doc, original, replacement, para):
                                             updated = True
 
-                        # Text replacements
                         for original, replacement, *_ in links_to_update:
                             if original in para.text:
                                 para.text = para.text.replace(original, replacement)
@@ -272,8 +257,6 @@ def update_doc_file(file_path, links_to_update):
             doc.Close(False)
         if word:
             word.Quit()
-
-
 
 def extract_docx_links(file_path):
     links = []
@@ -347,114 +330,66 @@ def write_log_to_html():
     <title>Link Update Log Report</title>
     <style>
         body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            line-height: 1.6;
+            font-family: Arial, sans-serif;
+            line-height: 1.5;
             color: #333;
             max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
-            background-color: #f9f9f9;
+            background-color: #eef2f3;
         }}
         h1 {{
             color: #2c3e50;
             text-align: center;
-            border-bottom: 2px solid #3498db;
-            padding-bottom: 10px;
-            margin-bottom: 30px;
         }}
-        .log-entry {{
+        h2 {{
+            color: #2980b9;
+        }}
+        .log-container {{
             background-color: white;
             border-radius: 5px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }}
+        .summary {{
+            background-color: #34495e;
+            color: white;
             padding: 15px;
-            margin-bottom: 15px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }}
+        .log-entry {{
+            border-bottom: 1px solid #ccc;
+            padding: 10px 0;
         }}
         .timestamp {{
-            color: #7f8c8d;
+            color: #95a5a6;
             font-weight: bold;
             margin-right: 10px;
         }}
-        .success {{
-            color: #27ae60;
-        }}
-        .error {{
-            color: #e74c3c;
-        }}
-        .info {{
-            color: #3498db;
-        }}
-        .link {{
-            color: #2980b9;
-            text-decoration: none;
-            word-break: break-all;
-        }}
-        .link:hover {{
-            text-decoration: underline;
-        }}
-        .summary {{
-            background-color: #2c3e50;
-            color: white;
-            padding: 20px;
-            border-radius: 5px;
-            margin-top: 30px;
-        }}
-        .summary h2 {{
-            margin-top: 0;
-            border-bottom: 1px solid #3498db;
-            padding-bottom: 10px;
-        }}
-        .stats {{
-            display: flex;
-            justify-content: space-between;
-            flex-wrap: wrap;
-        }}
-        .stat-box {{
-            background-color: #34495e;
-            padding: 15px;
-            border-radius: 5px;
-            margin: 10px 0;
-            flex: 1;
-            min-width: 200px;
-            margin-right: 15px;
-        }}
-        .stat-box:last-child {{
-            margin-right: 0;
-        }}
-        .stat-value {{
-            font-size: 24px;
-            font-weight: bold;
-            color: #3498db;
-        }}
-        .divider {{
-            border-top: 1px solid #ecf0f1;
-            margin: 20px 0;
-        }}
+        .success {{ color: #27ae60; }}
+        .error {{ color: #e74c3c; }}
+        .link {{ color: #2980b9; text-decoration: none; }}
+        .link:hover {{ text-decoration: underline; }}
+        .divider {{ border-top: 1px dashed #ccc; margin: 20px 0; }}
     </style>
 </head>
 <body>
     <h1>Link Update Log Report</h1>
     
-    {log_entries}
-    
     <div class="summary">
         <h2>Summary</h2>
-        <div class="stats">
-            <div class="stat-box">
-                <div>Processed Files</div>
-                <div class="stat-value">{processed}</div>
-            </div>
-            <div class="stat-box">
-                <div>Updated Files</div>
-                <div class="stat-value">{updated}</div>
-            </div>
-            <div class="stat-box">
-                <div>Total Replacements</div>
-                <div class="stat-value">{replacements}</div>
-            </div>
-        </div>
+        <p>Processed Files: <strong>{processed}</strong></p>
+        <p>Updated Files: <strong>{updated}</strong></p>
+        <p>Failed to Update Files: <strong>{failed}</strong></p>
+        <p>Total Replacements: <strong>{replacements}</strong></p>
     </div>
     
-    <div class="divider"></div>
+    <div class="log-container">
+        <h2>Log Entries</h2>
+        {log_entries}
+    </div>
     
     <p style="text-align: center; color: #7f8c8d;">
         Report generated on {generation_time}
@@ -463,44 +398,37 @@ def write_log_to_html():
 </html>
 """
 
-    # Filter only useful entries (those containing links or errors)
     useful_entries = []
-    processed = updated = replacements = 0
-    
-    for entry in log_entries:
-        if any(keyword in entry.lower() for keyword in ["http://", "https://", "file://", "error", "failed", "replacement"]):
-            useful_entries.append(entry)
-    
-    # Extract summary stats from the log
+    processed = updated = failed = total_replacements = 0
+
+    # Analyzing logs for summary and entries
     for entry in log_entries:
         if "Processed files:" in entry:
             processed = entry.split(":")[1].strip()
         elif "Updated files:" in entry:
             updated = entry.split(":")[1].strip()
         elif "Total replacements:" in entry:
-            replacements = entry.split(":")[1].strip()
-    
-    # Format each log entry
+            total_replacements = entry.split(":")[1].strip()
+        elif "failed" in entry.lower():
+            failed += 1  # Count failures
+            useful_entries.append(entry)  # Include failures in log entries
+        else:
+            useful_entries.append(entry)
+
     formatted_entries = []
     for entry in useful_entries:
         timestamp_end = entry.find("]")
-        timestamp = entry[:timestamp_end+1]
-        message = entry[timestamp_end+2:]
-        
-        # Determine entry type for styling
-        if "error" in message.lower() or "failed" in message.lower():
-            entry_class = "error"
-        elif "replacement" in message.lower() or "found" in message.lower():
-            entry_class = "success"
-        else:
-            entry_class = "info"
-        
+        timestamp = entry[:timestamp_end + 1]
+        message = entry[timestamp_end + 2:]
+
+        entry_class = "success" if "updated" in message.lower() else "error" if "error" in message.lower() or "failed" in message.lower() else "info"
+
         # Make URLs clickable
         urls = URL_REGEX.findall(message) + LOCAL_FILE_REGEX.findall(message)
         for url in set(urls):
             if url in message:
                 message = message.replace(url, f'<a href="{url}" class="link" target="_blank">{url}</a>')
-        
+
         formatted_entry = f"""
         <div class="log-entry">
             <span class="timestamp">{timestamp}</span>
@@ -508,13 +436,13 @@ def write_log_to_html():
         </div>
         """
         formatted_entries.append(formatted_entry)
-    
-    # Fill the template
+
     html_content = html_template.format(
         log_entries="\n".join(formatted_entries),
         processed=processed,
         updated=updated,
-        replacements=replacements,
+        failed=failed,
+        replacements=total_replacements,
         generation_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     )
     
@@ -564,7 +492,6 @@ def scan_and_update_documents(base_path):
     log(f"Updated files: {updated}")
     log(f"Total replacements: {total_replacements}")
     write_log_to_html()
-    write_log_to_file()
 
 if __name__ == "__main__":
     folder_path = input("Enter folder path: ").strip()
@@ -572,4 +499,4 @@ if __name__ == "__main__":
         print("Invalid folder path.")
         sys.exit(1)
     scan_and_update_documents(folder_path)
-    print("Log written to link_update_log.html")
+    print("Log written to link_update_report.html")
