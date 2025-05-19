@@ -1,319 +1,128 @@
-now remove txt logging and show me that which file is processing on terminal then give me final html in which it show how many file successfully processed and which had error to update and if any update is done when what is updated it should be in html file and in html only print files in which we found links
+I am getting this error in migration PR of nodejs
 
-import os
-import re
-import sys
-import urllib.parse
-from datetime import datetime
-from docx import Document
-from win32com import client
-import pyodbc
 
-Regex patterns
+<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Migration Started >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Migration Error >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+QueryFailedError: TransactionError: Transaction has not begun. Call begin() first.
+    at new QueryFailedError (C:\JIBEApps\J3App\node_modules\typeorm\error\QueryFailedError.js:11:28)
+    at C:\JIBEApps\J3App\node_modules\typeorm\driver\sqlserver\SqlServerQueryRunner.js:232:61
+    at C:\JIBEApps\J3App\node_modules\mssql\lib\base.js:1293:25
+    at Immediate.<anonymous> (C:\JIBEApps\J3App\node_modules\mssql\lib\tedious.js:592:25)
+    at processImmediate (node:internal/timers:468:21) {
+  code: 'ENOTBEGUN',
+  query: 'INSERT INTO "JiBEShip".."migrations"("timestamp", "name") VALUES (@0, @1)',
+  parameters: [
+    MssqlParameter { value: 1745824296808, type: 'bigint', params: [] },
+    MssqlParameter {
+      value: 'V3252212ProcurementAlterSpQMSFileVersionInfo1745824296808',
+      type: 'varchar',
+      params: []
+    }
+  ]
+}
+The migrations executed successfully
+The migrations completed. Exiting the process.
 
-URL_PATTERN = (
-r'(https?://[^\s<>"'{}|\^[]+|www\.[^\s<>"\'{}|\\^[]+|'
-r'file://[^\s<>"'{}|\^[]+|tel:[^\s<>"\'{}|\\^[]+)'
-)
-LOCAL_FILE_PATTERN = (
-r'(file://[^\s<>"'{}|\^\]]+|[A-Za-z]:[\\/][^\s<>"\'{}|\\^]]+|'
-r'(?:..?[\/]|[^:/\\s<>|]+[\/])[^\s<>"'{}|\^`]]+)'
-)
 
-URL_REGEX = re.compile(URL_PATTERN, re.IGNORECASE)
-LOCAL_FILE_REGEX = re.compile(LOCAL_FILE_PATTERN, re.IGNORECASE)
-EXCLUDE_PREFIXES = ("http://", "https://", "mailto:", "tel:", "ftp://", "s://", "www.")
 
-def get_last_two_path_parts(path):
-path = urllib.parse.unquote(path)
-path = path.replace("\", "/").rstrip("/")
-parts = path.split("/")
-return "/".join(parts[-2:]) if len(parts) >= 2 else path
 
-log_entries = []
 
-def log(message):
-timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-log_entries.append(f"[{timestamp}] {message}")
 
-def write_log_to_file():
-with open("link_update_log.txt", "w", encoding="utf-8") as log_file:
-log_file.write("\n".join(log_entries))
+import { MigrationUtilsService, eApplicationLocation } from "j2utils";
+import { MigrationInterface, QueryRunner } from "typeorm";
 
-def fetch_qms_file_id(filepath):
-dbConnectionString = (
-"DRIVER={ODBC Driver 17 for SQL Server};"
-"SERVER=dev.c5owyuw64shd.ap-south-1.rds.amazonaws.com,1982;"
-"DATABASE=JIBE_Main;"
-"UID=j2;"
-"PWD=123456;"
-"Max Pool Size=200;"
-)
+/**
+ * @author Muhammad Tariq
+ * @description updated QMS_FileVersionInfo table to remove IDENTITY from ID column
+ * @impactedModules QMS
+ * @approvedBy Zakhar
+ * @environment ALL
+ * @client All the clients
+ * @sqlShipPR https://dev.azure.com/jibe-erp/JiBe/_git/sql-jibe-ship/pullrequest/142664
+ * @class V3252212ProcurementAlterSpQMSFileVersionInfo1745824296808
+ * @implements {MigrationInterface}
+ */
+export class V3252212ProcurementAlterSpQMSFileVersionInfo1745824296808 implements MigrationInterface {
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    const className = this.constructor.name;
+    try {
+      const application = await MigrationUtilsService.getApplicationLocation();
+      if (application === eApplicationLocation.Vessel) {
+        await queryRunner.startTransaction();
+        try {
+          await queryRunner.query(`
+             IF NOT EXISTS (
+            SELECT * FROM INFORMATION_SCHEMA.TABLES 
+            WHERE TABLE_NAME = 'QMS_FileVersionInfo' AND TABLE_SCHEMA = 'dbo'
+        )
+        BEGIN
+            CREATE TABLE [dbo].[QMS_FileVersionInfo] (
+                [ID] INT NOT NULL,
+                [FileID] INT NULL,
+                [Version] INT NULL,
+                [FilePath] VARCHAR(MAX) NULL,
+                [Created_By] INT NOT NULL,
+                [Date_Of_Creatation] DATETIME NOT NULL,
+                [Modified_By] INT NULL,
+                [Date_Of_Modification] DATETIME NULL,
+                [Deleted_By] INT NULL,
+                [Date_Of_Deletion] DATETIME NULL,
+                [Active_Status] BIT CONSTRAINT [DF_QMS_FileVersionInfo_Active_Status] DEFAULT ((1)) NOT NULL,
+                [Is_Indexed] BIT DEFAULT ((0)) NOT NULL,
+                [indexing_last_retry_time] DATETIME NULL,
+                CONSTRAINT [PK_QMS_FileVersionInfo] PRIMARY KEY CLUSTERED ([ID] ASC) WITH (FILLFACTOR = 80)
+            );
+        END
+        ELSE
+        BEGIN
+            -- Add ID_temp column if it doesn't exist
+            IF NOT EXISTS (
+                SELECT * FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_NAME = 'QMS_FileVersionInfo' AND COLUMN_NAME = 'ID_temp'
+            )
+            BEGIN
+                EXEC('ALTER TABLE dbo.QMS_FileVersionInfo ADD ID_temp INT NULL;');
+            END
 
-try:  
-    conn = pyodbc.connect(dbConnectionString)  
-    cursor = conn.cursor()  
-    normalized_path = get_last_two_path_parts(filepath)  
-    cursor.execute("""  
-        SELECT TOP 1 encryptedDocId FROM QMS_DocIds_Import01   
-        WHERE filepath LIKE ?  
-    """, f"%{normalized_path}%")  
-    row = cursor.fetchone()  
-    return row[0] if row else None  
+            -- Copy values from ID to ID_temp
+            EXEC('UPDATE dbo.QMS_FileVersionInfo SET ID_temp = ID;');
 
-except Exception as e:  
-    log(f"Database error for {filepath}: {e}")  
-    return None  
-finally:  
-    try:  
-        cursor.close()  
-        conn.close()  
-    except:  
-        pass
+            -- Drop existing primary key constraint
+            EXEC('ALTER TABLE dbo.QMS_FileVersionInfo DROP CONSTRAINT PK_QMS_FileVersionInfo;');
 
-def is_local_file_url(url):
-url = url.strip().lower()
-return (LOCAL_FILE_REGEX.match(url) and not url.startswith(EXCLUDE_PREFIXES))
+            -- Drop original ID column
+            EXEC('ALTER TABLE dbo.QMS_FileVersionInfo DROP COLUMN ID;');
 
-def get_qms_replacement(url):
-encrypted_doc_id = fetch_qms_file_id(url)
-if encrypted_doc_id:
-log(f"Found encrypted ID for {url} => {encrypted_doc_id}")
-return f"#\qms?DocId={encrypted_doc_id}"
-else:
-log(f"No encrypted ID found for {url}")
-return None
+            -- Rename ID_temp to ID
+            EXEC('EXEC sp_rename ''dbo.QMS_FileVersionInfo.ID_temp'', ''ID'', ''COLUMN'';');
 
-def process_hyperlink(hyperlink, line_offset, source_type):
-try:
-if not (hyperlink and hasattr(hyperlink, 'address') and hyperlink.address):
-return None
-url = hyperlink.address.strip()
-if not is_local_file_url(url):
-log(f"Skipped non-local URL: {url}")
-return None
-replacement = get_qms_replacement(url)
-if not replacement:
-log(f"Replacement not found for {url}")
-return None
-display_text = (hyperlink.text.strip() if hasattr(hyperlink, 'text') and hyperlink.text
-else replacement)
-log(f"Prepared replacement: {url} => {replacement}")
-return (url, replacement, line_offset, source_type, display_text)
-except Exception as e:
-log(f"Hyperlink processing error: {e}")
-return None
+            -- Alter ID to NOT NULL
+            EXEC('ALTER TABLE dbo.QMS_FileVersionInfo ALTER COLUMN ID INT NOT NULL;');
 
-def extract_links_from_text(text, line_offset, existing_links):
-links = []
-if not text.strip():
-return links
-for url in URL_REGEX.findall(text):
-if url and not any(url in found_url for found_url, *_ in existing_links):
-if is_local_file_url(url):
-replacement = get_qms_replacement(url)
-if replacement:
-links.append((url, replacement, line_offset, "Text", replacement))
-return links
+            -- Re-add primary key constraint
+            EXEC('ALTER TABLE dbo.QMS_FileVersionInfo ADD CONSTRAINT PK_QMS_FileVersionInfo PRIMARY KEY CLUSTERED (ID ASC) WITH (FILLFACTOR = 80);');
+        END
+          `);
 
-def extract_paragraph_links(paragraph, line_offset):
-links = []
-text = paragraph.text.strip()
-if not text:
-return links
-if hasattr(paragraph, 'hyperlinks'):
-for hyperlink in paragraph.hyperlinks:
-link_data = process_hyperlink(hyperlink, line_offset, "Hyperlink")
-if link_data:
-links.append(link_data)
-links.extend(extract_links_from_text(text, line_offset, links))
-return links
+          await queryRunner.commitTransaction();
+        } catch (innerError) {
+          await queryRunner.rollbackTransaction();
+          await MigrationUtilsService.migrationLog(
+            className,
+            innerError,
+            "E",
+            "qms",
+            "QMS_FileVersionInfo innerError",
+            true
+          );
+        }
+      }
 
-def update_docx_file(file_path, links_to_update):
-try:
-doc = Document(file_path)
-updated = False
-for para in doc.paragraphs:
-if hasattr(para, 'hyperlinks'):
-for hyperlink in para.hyperlinks:
-for original, replacement, *_ in links_to_update:
-if hyperlink.address and original in hyperlink.address:
-hyperlink.address = replacement
-updated = True
-log(f"Updated hyperlink in DOCX: {original} => {replacement}")
-for original, replacement, *_ in links_to_update:
-if original in para.text:
-para.text = para.text.replace(original, replacement)
-updated = True
-log(f"Replaced text in paragraph: {original} => {replacement}")
-for table in doc.tables:
-for row in table.rows:
-for cell in row.cells:
-for para in cell.paragraphs:
-for original, replacement, *_ in links_to_update:
-if original in para.text:
-para.text = para.text.replace(original, replacement)
-updated = True
-log(f"Replaced text in table cell: {original} => {replacement}")
-for section in doc.sections:
-for part in (section.header, section.footer):
-if part:
-for para in part.paragraphs:
-for original, replacement, *_ in links_to_update:
-if original in para.text:
-para.text = para.text.replace(original, replacement)
-updated = True
-log(f"Replaced text in header/footer: {original} => {replacement}")
-if updated:
-doc.save(file_path)
-log(f"Saved updated DOCX: {file_path}")
-return updated
-except Exception as e:
-log(f"Error updating DOCX file {file_path}: {e}")
-return False
+      await MigrationUtilsService.migrationLog(className, "", "S", "qms", "QMS_FileVersionInfo");
+    } catch (error) {
+      await MigrationUtilsService.migrationLog(className, error, "E", "qms", "QMS_FileVersionInfo", true);
+    }
+  }
 
-def update_doc_file(file_path, links_to_update):
-word = doc = None
-try:
-word = client.Dispatch("Word.Application")
-word.Visible = False
-doc = word.Documents.Open(os.path.abspath(file_path), ReadOnly=False, Visible=False)
-updated = False
-for para in doc.Paragraphs:
-text = para.Range.Text.strip()
-for original, replacement, *_ in links_to_update:
-if original in para.Range.Text:
-para.Range.Text = para.Range.Text.replace(original, replacement)
-updated = True
-log(f"Updated DOC paragraph: {original} => {replacement}")
-if hasattr(para.Range, 'Hyperlinks'):
-for hyperlink in para.Range.Hyperlinks:
-for original, replacement, *_ in links_to_update:
-if hyperlink.Address and original in hyperlink.Address:
-hyperlink.Address = replacement
-updated = True
-log(f"Updated DOC hyperlink: {original} => {replacement}")
-for section in doc.Sections:
-for hf in [section.Headers(1), section.Footers(1)]:
-if hf:
-for original, replacement, *_ in links_to_update:
-if original in hf.Range.Text:
-hf.Range.Text = hf.Range.Text.replace(original, replacement)
-updated = True
-log(f"Updated DOC header/footer: {original} => {replacement}")
-if updated:
-doc.Save()
-log(f"Saved updated DOC: {file_path}")
-return updated
-except Exception as e:
-log(f"Error updating DOC file {file_path}: {e}")
-return False
-finally:
-if doc:
-doc.Close(False)
-if word:
-word.Quit()
-
-def extract_docx_links(file_path):
-links = []
-try:
-doc = Document(file_path)
-line_offset = 0
-for para in doc.paragraphs:
-links.extend(extract_paragraph_links(para, line_offset))
-line_offset += len(para.text.split('\n'))
-for table in doc.tables:
-for row in table.rows:
-for cell in row.cells:
-for para in cell.paragraphs:
-links.extend(extract_paragraph_links(para, line_offset))
-line_offset += len(para.text.split('\n'))
-for section in doc.sections:
-for part in (section.header, section.footer):
-if part:
-for para in part.paragraphs:
-links.extend(extract_paragraph_links(para, line_offset))
-line_offset += len(para.text.split('\n'))
-except Exception as e:
-log(f"Error extracting links from DOCX {file_path}: {e}")
-return links
-
-def extract_doc_links(file_path):
-links = []
-word = doc = None
-try:
-word = client.Dispatch("Word.Application")
-word.Visible = False
-doc = word.Documents.Open(os.path.abspath(file_path), ReadOnly=True, Visible=False)
-line_offset = 0
-for para in doc.Paragraphs:
-text = para.Range.Text.strip()
-if text:
-if hasattr(para.Range, 'Hyperlinks'):
-for hyperlink in para.Range.Hyperlinks:
-link_data = process_hyperlink(hyperlink, line_offset, "Hyperlink")
-if link_data:
-links.append(link_data)
-links.extend(extract_links_from_text(text, line_offset, links))
-line_offset += len(text.split('\n'))
-for section in doc.Sections:
-for hf in [section.Headers(1), section.Footers(1)]:
-if hf:
-if hasattr(hf.Range, 'Hyperlinks'):
-for hyperlink in hf.Range.Hyperlinks:
-link_data = process_hyperlink(hyperlink, line_offset, "Header/Footer")
-if link_data:
-links.append(link_data)
-links.extend(extract_links_from_text(hf.Range.Text, line_offset, links))
-line_offset += len(hf.Range.Text.split('\n'))
-except Exception as e:
-log(f"Error extracting links from DOC {file_path}: {e}")
-finally:
-if doc:
-doc.Close(False)
-if word:
-word.Quit()
-return links
-
-def scan_and_update_documents(base_path):
-processed = updated = total_replacements = 0
-log(f"Starting scan in: {base_path}")
-for root, , files in os.walk(base_path):
-for file in files:
-ext = os.path.splitext(file)[1].lower()
-if ext not in (".doc", ".docx"):
-continue
-full_path = os.path.join(root, file)
-processed += 1
-log(f"Processing [{processed}]: {full_path}")
-try:
-extractor = extract_docx_links if ext == ".docx" else extract_doc_links
-links = extractor(full_path)
-if not links:
-log("No links found.")
-continue
-replaceable_links = [(orig, repl) for orig, repl, * in links if repl]
-if not replaceable_links:
-log("No replaceable links found.")
-continue
-updater = update_docx_file if ext == ".docx" else update_doc_file
-if updater(full_path, replaceable_links):
-updated += 1
-total_replacements += len(replaceable_links)
-log(f"Updated {len(replaceable_links)} links.")
-except Exception as e:
-log(f"[ERROR] {file}: {e}")
-log("=== Scan Complete ===")
-log(f"Processed files: {processed}")
-log(f"Updated files: {updated}")
-log(f"Total replacements: {total_replacements}")
-write_log_to_file()
-
-if name == "main":
-folder_path = input("Enter folder path: ").strip()
-if not folder_path or not os.path.exists(folder_path):
-print("Invalid folder path.")
-sys.exit(1)
-scan_and_update_documents(folder_path)
-print("Log written to link_update_log.txt")
-
+  public async down(queryRunner: QueryRunner): Promise<void> {}
+}
