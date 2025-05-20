@@ -97,6 +97,10 @@ def process_html_file(file_path):
         else:
             image_errors.append(decoded_src)
 
+    if not replacements:
+        print(f"{YELLOW}No local images found to convert in: {file_path}{RESET}")
+        return
+
     html_content = str(soup)
     for pattern, replacement in replacements:
         html_content = re.sub(
@@ -106,7 +110,7 @@ def process_html_file(file_path):
             flags=re.IGNORECASE
         )
 
-    # Word-specific cleanup
+    # Word-specific cleanup (only applied if replacements were made)
     html_content = re.sub(r"<o:p>(\.?)</o:p>", r"\1", html_content)
     html_content = re.sub(r'<!--(if.*?>|<!endif)-->', '', html_content, flags=re.DOTALL)
 
@@ -121,7 +125,7 @@ def process_html_file(file_path):
         with open(file_path, "w", encoding="utf-8", newline='') as f:
             f.write(html_content)
             f.write('\n')
-        
+
         print(f"{GREEN}Successfully processed{RESET}")
         if replacements:
             print(f"{BLUE}Converted {len(replacements)} images to base64{RESET}")
