@@ -1,128 +1,156 @@
-I am getting this error in migration PR of nodejs
+import os
+import base64
+import re
+from bs4 import BeautifulSoup
+from urllib.parse import unquote
+from PIL import Image
 
+# Terminal color codes
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+RED = "\033[91m"
+BLUE = "\033[94m"
+RESET = "\033[0m"
 
-<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Migration Started >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Migration Error >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-QueryFailedError: TransactionError: Transaction has not begun. Call begin() first.
-    at new QueryFailedError (C:\JIBEApps\J3App\node_modules\typeorm\error\QueryFailedError.js:11:28)
-    at C:\JIBEApps\J3App\node_modules\typeorm\driver\sqlserver\SqlServerQueryRunner.js:232:61
-    at C:\JIBEApps\J3App\node_modules\mssql\lib\base.js:1293:25
-    at Immediate.<anonymous> (C:\JIBEApps\J3App\node_modules\mssql\lib\tedious.js:592:25)
-    at processImmediate (node:internal/timers:468:21) {
-  code: 'ENOTBEGUN',
-  query: 'INSERT INTO "JiBEShip".."migrations"("timestamp", "name") VALUES (@0, @1)',
-  parameters: [
-    MssqlParameter { value: 1745824296808, type: 'bigint', params: [] },
-    MssqlParameter {
-      value: 'V3252212ProcurementAlterSpQMSFileVersionInfo1745824296808',
-      type: 'varchar',
-      params: []
-    }
-  ]
-}
-The migrations executed successfully
-The migrations completed. Exiting the process.
+def get_image_mime_type(image_path):
+    try:
+        with Image.open(image_path) as img:
+            format = img.format.lower()
+            if format in ["jpeg", "png", "gif", "bmp", "tiff"]:
+                return format
+    except Exception as e:
+        print(f"{YELLOW}MIME detection error ({image_path}): {str(e)}{RESET}")
+    return "png"
 
+def convert_image_to_base64(image_path):
+    try:
+        if not os.path.exists(image_path):
+            return None, None
+        mime_type = get_image_mime_type(image_path)
+        with open(image_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode("utf-8"), mime_type
+    except Exception as e:
+        print(f"{YELLOW}Image conversion error ({image_path}): {str(e)}{RESET}")
+        return None, None
 
+def try_open_html(file_path):
+    encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
+    for enc in encodings:
+        try:
+            with open(file_path, "r", encoding=enc) as f:
+                content = f.read()
+                return content, enc
+        except UnicodeDecodeError:
+            continue
+    raise UnicodeDecodeError(f"Could not decode {file_path} with tried encodings")
 
+def remove_trailing_dots(soup):
+    for tag in reversed(soup.find_all(['p', 'div'])):
+        if tag.text.strip() == ".":
+            tag.decompose()
+        else:
+            break
 
+def ensure_utf8_meta_tag(soup):
+    if not soup.find("meta", attrs={"charset": True}):
+        head = soup.head or soup.new_tag("head")
+        meta = soup.new_tag("meta", charset="utf-8")
+        head.insert(0, meta)
+        if not soup.head:
+            soup.insert(0, head)
 
+def process_html_file(file_path):
+    print(f"{GREEN}Processing: {file_path}{RESET}")
+    try:
+        html_content, encoding = try_open_html(file_path)
+    except Exception as e:
+        print(f"{RED}Error reading {file_path}: {str(e)}{RESET}")
+        return
 
-import { MigrationUtilsService, eApplicationLocation } from "j2utils";
-import { MigrationInterface, QueryRunner } from "typeorm";
+    soup = BeautifulSoup(html_content, "html.parser")
+    image_errors = []
+    replacements = []
+    processed_images = set()
 
-/**
- * @author Muhammad Tariq
- * @description updated QMS_FileVersionInfo table to remove IDENTITY from ID column
- * @impactedModules QMS
- * @approvedBy Zakhar
- * @environment ALL
- * @client All the clients
- * @sqlShipPR https://dev.azure.com/jibe-erp/JiBe/_git/sql-jibe-ship/pullrequest/142664
- * @class V3252212ProcurementAlterSpQMSFileVersionInfo1745824296808
- * @implements {MigrationInterface}
- */
-export class V3252212ProcurementAlterSpQMSFileVersionInfo1745824296808 implements MigrationInterface {
-  public async up(queryRunner: QueryRunner): Promise<void> {
-    const className = this.constructor.name;
-    try {
-      const application = await MigrationUtilsService.getApplicationLocation();
-      if (application === eApplicationLocation.Vessel) {
-        await queryRunner.startTransaction();
-        try {
-          await queryRunner.query(`
-             IF NOT EXISTS (
-            SELECT * FROM INFORMATION_SCHEMA.TABLES 
-            WHERE TABLE_NAME = 'QMS_FileVersionInfo' AND TABLE_SCHEMA = 'dbo'
+    for img in soup.find_all("img"):
+        src = img.get("src", "").strip()
+        if not src or src.startswith(("http://", "https://", "data:")):
+            continue
+
+        decoded_src = unquote(src)
+
+        if decoded_src.startswith("file:///"):
+            image_path = os.path.normpath(decoded_src.replace("file:///", ""))
+        elif os.path.isabs(decoded_src):
+            image_path = os.path.normpath(decoded_src)
+        else:
+            image_path = os.path.normpath(os.path.join(os.path.dirname(file_path), decoded_src))
+
+        if image_path in processed_images:
+            continue
+        processed_images.add(image_path)
+
+        base64_image, mime_type = convert_image_to_base64(image_path)
+        if base64_image:
+            base64_src = f"data:image/{mime_type};base64,{base64_image}"
+            replacements.append((re.escape(src), base64_src))
+        else:
+            image_errors.append(decoded_src)
+
+    html_content = str(soup)
+    for pattern, replacement in replacements:
+        html_content = re.sub(
+            rf'(<img[^>]*src\s*=\s*["\']){pattern}(["\'][^>]*>)',
+            rf'\1{replacement}\2',
+            html_content,
+            flags=re.IGNORECASE
         )
-        BEGIN
-            CREATE TABLE [dbo].[QMS_FileVersionInfo] (
-                [ID] INT NOT NULL,
-                [FileID] INT NULL,
-                [Version] INT NULL,
-                [FilePath] VARCHAR(MAX) NULL,
-                [Created_By] INT NOT NULL,
-                [Date_Of_Creatation] DATETIME NOT NULL,
-                [Modified_By] INT NULL,
-                [Date_Of_Modification] DATETIME NULL,
-                [Deleted_By] INT NULL,
-                [Date_Of_Deletion] DATETIME NULL,
-                [Active_Status] BIT CONSTRAINT [DF_QMS_FileVersionInfo_Active_Status] DEFAULT ((1)) NOT NULL,
-                [Is_Indexed] BIT DEFAULT ((0)) NOT NULL,
-                [indexing_last_retry_time] DATETIME NULL,
-                CONSTRAINT [PK_QMS_FileVersionInfo] PRIMARY KEY CLUSTERED ([ID] ASC) WITH (FILLFACTOR = 80)
-            );
-        END
-        ELSE
-        BEGIN
-            -- Add ID_temp column if it doesn't exist
-            IF NOT EXISTS (
-                SELECT * FROM INFORMATION_SCHEMA.COLUMNS 
-                WHERE TABLE_NAME = 'QMS_FileVersionInfo' AND COLUMN_NAME = 'ID_temp'
-            )
-            BEGIN
-                EXEC('ALTER TABLE dbo.QMS_FileVersionInfo ADD ID_temp INT NULL;');
-            END
 
-            -- Copy values from ID to ID_temp
-            EXEC('UPDATE dbo.QMS_FileVersionInfo SET ID_temp = ID;');
+    # Word-specific cleanup
+    html_content = re.sub(r"<o:p>(\.?)</o:p>", r"\1", html_content)
+    html_content = re.sub(r'<!--(if.*?>|<!endif)-->', '', html_content, flags=re.DOTALL)
 
-            -- Drop existing primary key constraint
-            EXEC('ALTER TABLE dbo.QMS_FileVersionInfo DROP CONSTRAINT PK_QMS_FileVersionInfo;');
+    # Re-parse, clean trailing dots, and ensure meta tag
+    soup = BeautifulSoup(html_content, "html.parser")
+    remove_trailing_dots(soup)
+    ensure_utf8_meta_tag(soup)
 
-            -- Drop original ID column
-            EXEC('ALTER TABLE dbo.QMS_FileVersionInfo DROP COLUMN ID;');
+    html_content = str(soup).rstrip(' .\t\n\r')
 
-            -- Rename ID_temp to ID
-            EXEC('EXEC sp_rename ''dbo.QMS_FileVersionInfo.ID_temp'', ''ID'', ''COLUMN'';');
+    try:
+        with open(file_path, "w", encoding="utf-8", newline='') as f:
+            f.write(html_content)
+            f.write('\n')
+        
+        print(f"{GREEN}Successfully processed{RESET}")
+        if replacements:
+            print(f"{BLUE}Converted {len(replacements)} images to base64{RESET}")
+        if image_errors:
+            print(f"{RED}Missing images in file: {file_path}{RESET}")
+            for img_src in image_errors:
+                print(f"{YELLOW} - {img_src}{RESET}")
+    except Exception as e:
+        print(f"{RED}Error saving {file_path}: {str(e)}{RESET}")
 
-            -- Alter ID to NOT NULL
-            EXEC('ALTER TABLE dbo.QMS_FileVersionInfo ALTER COLUMN ID INT NOT NULL;');
+def traverse_directory(base_directory):
+    base_directory = base_directory.strip().strip('"')
+    if not os.path.isdir(base_directory):
+        print(f"{RED}Error: Directory not found - {base_directory}{RESET}")
+        return
 
-            -- Re-add primary key constraint
-            EXEC('ALTER TABLE dbo.QMS_FileVersionInfo ADD CONSTRAINT PK_QMS_FileVersionInfo PRIMARY KEY CLUSTERED (ID ASC) WITH (FILLFACTOR = 80);');
-        END
-          `);
+    found_html = False
+    for root, _, files in os.walk(base_directory):
+        for file in files:
+            if file.lower().endswith((".html", ".htm")):
+                found_html = True
+                file_path = os.path.join(root, file)
+                process_html_file(file_path)
 
-          await queryRunner.commitTransaction();
-        } catch (innerError) {
-          await queryRunner.rollbackTransaction();
-          await MigrationUtilsService.migrationLog(
-            className,
-            innerError,
-            "E",
-            "qms",
-            "QMS_FileVersionInfo innerError",
-            true
-          );
-        }
-      }
+    if not found_html:
+        print(f"{YELLOW}No HTML/HTM files found in {base_directory}{RESET}")
 
-      await MigrationUtilsService.migrationLog(className, "", "S", "qms", "QMS_FileVersionInfo");
-    } catch (error) {
-      await MigrationUtilsService.migrationLog(className, error, "E", "qms", "QMS_FileVersionInfo", true);
-    }
-  }
-
-  public async down(queryRunner: QueryRunner): Promise<void> {}
-}
+if __name__ == "__main__":
+    print(f"{BLUE}HTML Image Embedder v2.1{RESET}")
+    print(f"{BLUE}Converts local images to base64 for better portability{RESET}")
+    base_directory = input("Enter the base directory path: ")
+    traverse_directory(base_directory)
