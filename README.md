@@ -1,73 +1,117 @@
-import os
-import win32com.client
-import pythoncom
-from tqdm import tqdm
+Some Error occured. Error: Error: Method: getAllDocuments
+Class: LinkedDocumentBLL
+Error: QueryFailedError: Error: Incorrect syntax near ')'.
 
-def convert_doc_to_mhtml(doc_path, mhtml_path):
-    """Convert a single DOC/DOCX file to MHTML format using Word's SaveAs function"""
-    pythoncom.CoInitialize()
-    try:
-        word = win32com.client.Dispatch("Word.Application")
-        word.Visible = False  # Run Word in the background
-        doc = word.Documents.Open(doc_path)
-        
-        # Save as MHTML format (Word's format code for MHTML is 9)
-        doc.SaveAs(mhtml_path, FileFormat=9)
-        doc.Close()
-        return True
-    except Exception as e:
-        print(f"Error converting {doc_path}: {str(e)}")
-        return False
-    finally:
-        word.Quit()
-        pythoncom.CoUninitialize()
 
-def find_and_convert_docs(root_folder):
-    """Find all DOC/DOCX files in root folder and convert them to MHTML"""
-    # Supported extensions
-    extensions = ('.doc', '.docx')
-    
-    # Count total files for progress bar
-    total_files = 0
-    for root, _, files in os.walk(root_folder):
-        for file in files:
-            if file.lower().endswith(extensions):
-                total_files += 1
-    
-    if total_files == 0:
-        print("No DOC/DOCX files found in the specified folder and its subfolders.")
-        return
-    
-    # Process files with progress bar
-    with tqdm(total=total_files, desc="Converting files", unit="file") as pbar:
-        for root, _, files in os.walk(root_folder):
-            for file in files:
-                if file.lower().endswith(extensions):
-                    doc_path = os.path.join(root, file)
-                    mhtml_path = os.path.splitext(doc_path)[0] + '.mht'
-                    
-                    # Skip if MHTML already exists
-                    if os.path.exists(mhtml_path):
-                        pbar.update(1)
-                        continue
-                    
-                    # Convert the file
-                    success = convert_doc_to_mhtml(doc_path, mhtml_path)
-                    if success:
-                        pbar.set_postfix(file=os.path.basename(doc_path))
-                    pbar.update(1)
+async getAllDocuments(obj) {
+    try {
+      const getFilesDataSql = String(`WITH LatestVersion
+      AS (
+        SELECT QMSID
+          ,MAX(Version) AS LatestVersion
+        FROM QMS_FILE_APPROVAL WITH (NOLOCK)
+        WHERE Active_Status = 1
+        GROUP BY QMSID
+        )
+        ,MaxLevel
+      AS (
+        SELECT QMSID
+          ,MAX(LevelID) AS MaxLevelID
+          ,Version
+        FROM QMS_FILE_APPROVAL WITH (NOLOCK)
+        WHERE Active_Status = 1
+        GROUP BY QMSID
+          ,Version
+        )
+        ,ApprovedMaxLevel
+      AS (
+        SELECT fa.QMSID
+          ,fa.LevelID
+          ,fa.Version
+        FROM QMS_FILE_APPROVAL fa WITH (NOLOCK)
+        INNER JOIN MaxLevel ml ON fa.QMSID = ml.QMSID
+          AND fa.Version = ml.Version
+          AND fa.LevelID = ml.MaxLevelID
+        WHERE fa.ApprovalStatus = 1
+        )
+        ,FilesWithApproval
+      AS (
+        SELECT DISTINCT QMSID
+        FROM QMS_FILE_APPROVAL WITH (NOLOCK)
+        WHERE Active_Status = 1
+        )
+      SELECT DISTINCT A.ID AS FOLDER_ID
+        ,A.ParentID AS PARENT_FOLDER_ID
+        ,CONVERT(VARCHAR(MAX), CONVERT(VARCHAR(MAX), A.ID) + '/') AS XPATH
+        ,A.LogFileID AS File_Name
+        ,CONVERT(VARCHAR(MAX), CONVERT(VARCHAR(MAX), A.LogFileID) + '/') AS XNPATH
+        ,A.FilePath + '/' AS OPATH
+        ,LEFT(ISNULL(A.filepath, ''), CASE 
+            WHEN LEN(ISNULL(A.filepath, '')) - CHARINDEX('/', REVERSE(ISNULL(A.filepath, '')) + '/') < 0
+              THEN 0
+            ELSE LEN(ISNULL(A.filepath, '')) - CHARINDEX('/', REVERSE(ISNULL(A.filepath, '')) + '/')
+            END) + '/' + CAST(A.LogFileID AS VARCHAR) AS FilePath
+        ,REPLACE(A.FilePath, A.FilePath + '/', '') AS FullFName
+        ,CONVERT(DECIMAL(9, 2), CEILING((ISNULL(A.Size, 0) / 1024.00) * 100) / 100) AS FileSize
+        ,A.Version
+        ,FV.Last_Update
+        ,FV.Published_On
+        ,FV.Remarks
+        ,A.NodeType
+      FROM QMSDTLSFILE_LOG A WITH (NOLOCK)
+      LEFT JOIN ApprovedMaxLevel AML ON AML.QMSID = A.ID
+        AND AML.Version = A.Version
+      LEFT JOIN FilesWithApproval FWA ON FWA.QMSID = A.ID
+      LEFT JOIN (
+        SELECT fvi.FileID
+          ,MAX(fvi.ID) AS Max_ID
+          ,MAX(fvi.[Version]) AS Version
+          ,MAX(foi.Operation_Date) AS Published_On
+          ,foi.Date_Of_Creatation AS Last_Update
+          ,foi.Remarks
+        FROM QMS_FileVersionInfo fvi
+        INNER JOIN QMS_FileOperationInfo foi ON foi.FileID = fvi.FileID
+          AND foi.Operation_Date = (
+            SELECT MAX(fo.Operation_Date)
+            FROM QMS_FileOperationInfo fo
+            WHERE fo.FileID = fvi.FileID
+              AND fo.active_status = 1
+              AND fvi.active_status = 1
+            )
+        GROUP BY fvi.FileID
+          ,foi.Date_Of_Creatation
+          ,foi.Remarks
+        ) FV ON FV.FileID = A.ID
+      WHERE A.NodeType = 0
+        AND A.Active_Status = 1
+        AND (
+          FWA.QMSID IS NULL
+          OR (
+            AML.QMSID IS NOT NULL
+            AND AML.Version = A.Version
+            )
+          )
+        `);
 
-def main():
-    print("DOC/DOCX to MHTML Converter")
-    print("--------------------------")
-    root_folder = input("Enter the root folder path: ").strip('"')
-    
-    if not os.path.isdir(root_folder):
-        print("Error: The specified path is not a valid directory.")
-        return
-    
-    find_and_convert_docs(root_folder)
-    print("\nConversion completed!")
-
-if __name__ == "__main__":
-    main()
+      const oDataService = new ODataService(obj, getConnection);
+      const result = await oDataService.getJoinResult(getFilesDataSql);
+      const [j2BaseUrl, j3BaseUrl] = await Promise.all([
+        new QMSBLL().getBaseUrl("j2_qms"),
+        new QMSBLL().getBaseUrl("qms"),
+      ]);
+      let docResults: any = [];
+      if (result.records.length > 0) {
+        for (const item of result.records) {
+          item.encryptedDocId = await new QMSBLL().encryptData(item.FOLDER_ID.toString());
+          (item.j2Url = j2BaseUrl[0].base_Url + "QMS/Viewer.aspx?DocId=" + item.encryptedDocId),
+            (item.j3Url = j3BaseUrl[0].base_Url + "/?DocId=" + item.encryptedDocId + "&isMenuVisible=true"),
+            docResults.push(item);
+        }
+      } else {
+        docResults = "No Record Found";
+      }
+      return docResults;
+    } catch (error) {
+      throw new Error(`Method: getAllDocuments \nClass: LinkedDocumentBLL \nError: ${error}`);
+    }
+  }
