@@ -1,3 +1,4 @@
+for 16303 records it is taking 55 sec 
 
 
 declare @UserId INT = 1;
