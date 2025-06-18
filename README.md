@@ -1,52 +1,58 @@
 DECLARE @UserId INT = 1;
 
--- First, get all accessible folders for the user to filter early
+-- First, get all accessible folder IDs for the user
 WITH AccessibleFolders AS (
-    SELECT FolderID 
+    SELECT DISTINCT FolderID 
     FROM QMS_User_Folder_Access WITH (NOLOCK)
     WHERE UserID = @UserId
 ),
+-- Get all records that should be visible to the user
+VisibleItems AS (
+    SELECT va.*
+    FROM QMSdtlsFile_Log va WITH (NOLOCK)
+    WHERE va.active_status = 1
+    AND (
+        (va.nodeType = 1 AND EXISTS (SELECT 1 FROM AccessibleFolders af WHERE af.FolderID = va.ID))
+        OR
+        (va.nodeType = 0 AND EXISTS (SELECT 1 FROM AccessibleFolders af WHERE af.FolderID = va.ParentID))
+    )
+),
+-- Build the complete hierarchy for visible items
 FileHierarchy AS (
-    -- Level 0 (root) - we just use \ for root
+    -- Base case: root folders (ParentID = 0)
     SELECT 
         f.ID,
         f.ParentID,
         f.logFileId,
         f.nodeType,
-        CAST('\ ' AS VARCHAR(900)) AS filterPath,  -- Reduced from MAX to 900
+        CAST('\' AS VARCHAR(900)) AS filterPath,
         0 AS Level,
         CAST('Documents\' + f.logFileId + '\' AS VARCHAR(900)) AS FullPath
-    FROM QMSdtlsFile_Log f WITH (NOLOCK)
+    FROM VisibleItems f
     WHERE f.ParentID = 0
-    AND f.active_status = 1
-    AND EXISTS (SELECT 1 FROM AccessibleFolders af WHERE af.FolderID = f.ID)
 
     UNION ALL
 
-    -- Children (skip root logFileId and append their own logFileId and \)
+    -- Recursive case: child items
     SELECT 
         child.ID,
         child.ParentID,
         child.logFileId,
         child.nodeType,
-        CAST(parent.filterPath + child.logFileId + '\' AS VARCHAR(900)) AS filterPath,
-        parent.Level + 1 AS Level,
+        CAST(parent.filterPath + child.logFileId + CASE WHEN child.nodeType = 1 THEN '\' ELSE '' END AS VARCHAR(900)),
+        parent.Level + 1,
         CASE WHEN child.nodeType = 1 
              THEN CAST(parent.FullPath + child.logFileId + '\' AS VARCHAR(900)) 
-             ELSE CAST(parent.FullPath + child.logFileId AS VARCHAR(900)) END AS FullPath
-    FROM QMSdtlsFile_Log child WITH (NOLOCK)
+             ELSE CAST(parent.FullPath + child.logFileId AS VARCHAR(900)) END
+    FROM VisibleItems child
     INNER JOIN FileHierarchy parent ON child.ParentID = parent.ID
-    WHERE child.active_status = 1
-    -- Only include children of accessible folders
-    AND (child.nodeType = 1 AND EXISTS (SELECT 1 FROM AccessibleFolders af WHERE af.FolderID = child.ID)
-         OR child.nodeType = 0 AND EXISTS (SELECT 1 FROM AccessibleFolders af WHERE af.FolderID = parent.ID))
 )
 
--- Final Output
+-- Final output with all paths correctly calculated
 SELECT 
     va.date_of_Creatation AS dateCreated,
     ISNULL(fi.date_of_creatation, va.date_of_creatation) AS dateModified,
-    ISNULL(fh.filterPath, '') AS filterPath,
+    fh.filterPath,
     CASE
         WHEN va.nodeType = 1 AND EXISTS (
             SELECT 1
@@ -65,16 +71,10 @@ SELECT
             THEN RIGHT(va.logFileId, CHARINDEX('.', REVERSE(va.logFileId)) - 1)
         ELSE 'Folder'
     END AS type,
-    ISNULL(fh.FullPath, '') AS fullPath,
+    fh.FullPath,
     va.version as fileVersion
-FROM QMSdtlsFile_Log va WITH (NOLOCK)
-LEFT JOIN FileHierarchy fh ON va.ID = fh.ID
+FROM VisibleItems va
+INNER JOIN FileHierarchy fh ON va.ID = fh.ID
 LEFT JOIN QMS_FileVersionInfo fi WITH (NOLOCK) ON va.ID = fi.FileId AND va.version = fi.Version AND va.nodeType = 0
-WHERE va.active_status = 1
-AND (
-    (va.nodeType = 1 AND EXISTS (SELECT 1 FROM AccessibleFolders af WHERE af.FolderID = va.ID))
-    OR
-    (va.nodeType = 0 AND EXISTS (SELECT 1 FROM AccessibleFolders af WHERE af.FolderID = va.ParentID))
-)
 ORDER BY va.logfileID
 OPTION (MAXRECURSION 200, OPTIMIZE FOR UNKNOWN);
