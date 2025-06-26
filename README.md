@@ -41,24 +41,12 @@ function App() {
       .catch((error) => console.error('Error fetching superheroes:', error));
   }, []);
 
-  // Debugging: Log selected heroes whenever they change.
-  useEffect(() => {
-    console.log('Selected heroes:', selected);
-  }, [selected]);
-
-  // Debugging: Log superheroes data when it is fetched
-  useEffect(() => {
-    console.log('Superheroes:', superheroes);
-  }, [superheroes]);
-
   const handleSelect = (id) => {
-  console.log('Selected ID:', id); // Debugging line
-    const idStr = String(id);
     setSelected((prev) => {
-      if (prev.includes(idStr)) {
-        return prev.filter((sid) => sid !== idStr);
+      if (prev.includes(id)) {
+        return prev.filter((sid) => sid !== id);
       } else if (prev.length < 2) {
-        return [...prev, idStr];
+        return [...prev, id];
       } else {
         return prev;
       }
@@ -69,8 +57,8 @@ function App() {
   const handleBack = () => setShowCompare(false);
 
   if (showCompare && selected.length === 2) {
-    const hero1 = superheroes.find((h) => String(h.id) === selected[0]);
-    const hero2 = superheroes.find((h) => String(h.id) === selected[1]);
+    const hero1 = superheroes.find((h) => h.id === selected[0]);
+    const hero2 = superheroes.find((h) => h.id === selected[1]);
     const { results, winner } = compareStats(hero1, hero2);
     const categories = ['intelligence', 'strength', 'speed', 'durability', 'power', 'combat'];
 
@@ -146,12 +134,9 @@ function App() {
                 <td>
                   <input
                     type="checkbox"
-                    checked={selected.includes(String(hero.id))}
-                    onChange={(e) => {
-                      console.log("Checkbox toggled for hero", hero.id, "checked:", e.target.checked);
-                      handleSelect(hero.id);
-                    }}
-                    disabled={selected.length === 2 && !selected.includes(String(hero.id))}
+                    checked={selected.includes(hero.id)}
+                    onChange={() => handleSelect(hero.id)}
+                    disabled={selected.length === 2 && !selected.includes(hero.id)}
                   />
                 </td>
                 <td>{hero.id}</td>
@@ -169,12 +154,12 @@ function App() {
             ))}
           </tbody>
         </table>
-        {/* Debug: Show currently selected heroes */}
         <div style={{ marginTop: '10px', fontSize: '14px' }}>
           Selected: {selected.join(', ')}
         </div>
         <button
           onClick={handleCompare}
+          disabled={selected.length !== 2}
           style={{ marginTop: '20px' }}
         >
           Compare
