@@ -1,172 +1,31 @@
-import React, { useEffect, useState } from 'react';
-import './App.css';
+-- SQL Server:
+SELECT * FROM Qmsdtlsfile_log WHERE filepath LIKE 'Documents%' COLLATE SQL_Latin1_General_CP1_CS_AS;
+SELECT * FROM Qmsdtlsfile_log WHERE filepath COLLATE Latin1_General_CS_AS LIKE 'Documents%';
 
-function compareStats(hero1, hero2) {
-  const categories = ['intelligence', 'strength', 'speed', 'durability', 'power', 'combat'];
-  let hero1Wins = 0;
-  let hero2Wins = 0;
-  const results = {};
+-- MySQL/MariaDB:
+SELECT * FROM Qmsdtlsfile_log WHERE filepath LIKE BINARY 'Documents%';
+SELECT * FROM Qmsdtlsfile_log WHERE filepath LIKE 'Documents%' COLLATE utf8_bin;
+SELECT * FROM Qmsdtlsfile_log WHERE filepath REGEXP '^Documents';
 
-  categories.forEach((cat) => {
-    const val1 = hero1.powerstats[cat];
-    const val2 = hero2.powerstats[cat];
-    if (val1 > val2) {
-      results[cat] = 1;
-      hero1Wins++;
-    } else if (val2 > val1) {
-      results[cat] = 2;
-      hero2Wins++;
-    } else {
-      results[cat] = 0;
-    }
-  });
+-- PostgreSQL:
+SELECT * FROM Qmsdtlsfile_log WHERE filepath LIKE 'Documents%' COLLATE "C";
+SELECT * FROM Qmsdtlsfile_log WHERE filepath ~ '^Documents';
+SELECT * FROM Qmsdtlsfile_log WHERE filepath ~ '^Documents.*';
 
-  let winner = null;
-  if (hero1Wins > hero2Wins) winner = 1;
-  else if (hero2Wins > hero1Wins) winner = 2;
-  else winner = 0;
+-- Oracle:
+SELECT * FROM Qmsdtlsfile_log WHERE REGEXP_LIKE(filepath, '^Documents');
+SELECT * FROM Qmsdtlsfile_log WHERE filepath LIKE 'Documents%' AND filepath = UPPER(filepath);
+SELECT * FROM Qmsdtlsfile_log WHERE NLSSORT(filepath, 'NLS_SORT=BINARY') LIKE NLSSORT('Documents%', 'NLS_SORT=BINARY');
 
-  return { results, winner };
-}
+-- SQLite:
+SELECT * FROM Qmsdtlsfile_log WHERE filepath LIKE 'Documents%' AND filepath GLOB 'Documents*';
+SELECT * FROM Qmsdtlsfile_log WHERE filepath REGEXP '^Documents';
 
-function App() {
-  const [superheroes, setSuperheroes] = useState([]);
-  const [selected, setSelected] = useState([]);
-  const [showCompare, setShowCompare] = useState(false);
+-- DB2:
+SELECT * FROM Qmsdtlsfile_log WHERE filepath LIKE 'Documents%' AND VARGRAPHIC(filepath) = VARGRAPHIC('Documents%');
+SELECT * FROM Qmsdtlsfile_log WHERE LOWER(filepath) LIKE LOWER('Documents%') AND filepath LIKE 'Documents%';
 
-  useEffect(() => {
-    fetch('/api/superheroes')
-      .then((response) => response.json())
-      .then((data) => setSuperheroes(data))
-      .catch((error) => console.error('Error fetching superheroes:', error));
-  }, []);
-
-  const handleSelect = (id) => {
-    setSelected((prev) => {
-      if (prev.includes(id)) {
-        return prev.filter((sid) => sid !== id);
-      } else if (prev.length < 2) {
-        return [...prev, id];
-      } else {
-        return prev;
-      }
-    });
-  };
-
-  const handleCompare = () => setShowCompare(true);
-  const handleBack = () => setShowCompare(false);
-
-  if (showCompare && selected.length === 2) {
-    const hero1 = superheroes.find((h) => h.id === selected[0]);
-    const hero2 = superheroes.find((h) => h.id === selected[1]);
-    const { results, winner } = compareStats(hero1, hero2);
-    const categories = ['intelligence', 'strength', 'speed', 'durability', 'power', 'combat'];
-
-    return (
-      <div className="App">
-        <header className="App-header">
-          <h1>Superhero Comparison</h1>
-          <div style={{ display: 'flex', gap: '40px', justifyContent: 'center' }}>
-            {[hero1, hero2].map((hero, idx) => (
-              <div key={hero.id} style={{ textAlign: 'center' }}>
-                <img src={hero.image} alt={hero.name} width="100" />
-                <h2>{hero.name}</h2>
-              </div>
-            ))}
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Category</th>
-                <th>{hero1.name}</th>
-                <th>{hero2.name}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {categories.map((cat) => (
-                <tr key={cat}>
-                  <td>{cat.charAt(0).toUpperCase() + cat.slice(1)}</td>
-                  <td style={{ background: results[cat] === 1 ? '#2ecc40' : undefined }}>
-                    {hero1.powerstats[cat]}
-                  </td>
-                  <td style={{ background: results[cat] === 2 ? '#2ecc40' : undefined }}>
-                    {hero2.powerstats[cat]}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <h2>
-            {winner === 1
-              ? `${hero1.name} wins!`
-              : winner === 2
-              ? `${hero2.name} wins!`
-              : 'It\'s a tie!'}
-          </h2>
-          <button onClick={handleBack}>Back to Table</button>
-        </header>
-      </div>
-    );
-  }
-
-  return (
-    <div className="App">
-      <header className="App-header">
-        <h1>Superheroes</h1>
-        <table>
-          <thead>
-            <tr>
-              <th>Select</th>
-              <th>ID</th>
-              <th>Name</th>
-              <th>Image</th>
-              <th>Intelligence</th>
-              <th>Strength</th>
-              <th>Speed</th>
-              <th>Durability</th>
-              <th>Power</th>
-              <th>Combat</th>
-            </tr>
-          </thead>
-          <tbody>
-            {superheroes.map((hero) => (
-              <tr key={hero.id}>
-                <td>
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(hero.id)}
-                    onChange={() => handleSelect(hero.id)}
-                    disabled={selected.length === 2 && !selected.includes(hero.id)}
-                  />
-                </td>
-                <td>{hero.id}</td>
-                <td>{hero.name}</td>
-                <td>
-                  <img src={hero.image} alt={hero.name} width="50" />
-                </td>
-                <td>{hero.powerstats.intelligence}</td>
-                <td>{hero.powerstats.strength}</td>
-                <td>{hero.powerstats.speed}</td>
-                <td>{hero.powerstats.durability}</td>
-                <td>{hero.powerstats.power}</td>
-                <td>{hero.powerstats.combat}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div style={{ marginTop: '10px', fontSize: '14px' }}>
-          Selected: {selected.join(', ')}
-        </div>
-        <button
-          onClick={handleCompare}
-          disabled={selected.length !== 2}
-          style={{ marginTop: '20px' }}
-        >
-          Compare
-        </button>
-      </header>
-    </div>
-  );
-}
-
-export default App;
+-- Universal approach (works in most databases but may be slower):
+SELECT * FROM Qmsdtlsfile_log 
+WHERE filepath LIKE 'Documents%' 
+  AND SUBSTRING(filepath, 1, 9) = 'Documents';
