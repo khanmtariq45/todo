@@ -1,17 +1,18 @@
-CREATE OR ALTER PROCEDURE [qms].[SP_Get_QMS_Core_Main_Tree] 
-    @UserId INT
-AS
-BEGIN
-    BEGIN TRY
-        SET NOCOUNT ON;
+Msg 240, Level 16, State 1, Line 40
+Types don't match between the anchor and the recursive part in column "folderPath" of recursive query "FolderCTE".
 
+
+declare @UserId INT = 1
+
+    BEGIN TRY
+       
         -- Step 1: AccessibleFolders temp table with clustered index
         DROP TABLE IF EXISTS #AccessibleFolders;
         CREATE TABLE #AccessibleFolders (FolderID INT PRIMARY KEY);
         
         INSERT INTO #AccessibleFolders (FolderID)
         SELECT DISTINCT FolderID
-        FROM qms.QMS_User_Folder_Access WITH (NOLOCK)
+        FROM QMS_User_Folder_Access WITH (NOLOCK)
         WHERE UserID = @UserId;
 
         -- Step 2: FileHierarchy temp table with optimized structure and indexes
@@ -33,7 +34,7 @@ BEGIN
             f.ParentID,
             f.nodeType,
             '/' + CAST(f.ID AS VARCHAR(100)) + '/' 
-        FROM qms.QMSdtlsFile_Log f WITH (NOLOCK)
+        FROM QMSdtlsFile_Log f WITH (NOLOCK)
         WHERE 
             f.ParentID = 0
             AND f.active_status = 1
@@ -47,7 +48,7 @@ BEGIN
                 ParentID, 
                 nodeType,
                 CAST('/' + CAST(ID AS VARCHAR(100)) + '/' AS VARCHAR(1000)) AS folderPath
-            FROM qms.QMSdtlsFile_Log
+            FROM QMSdtlsFile_Log
             WHERE 
                 ParentID = 0
                 AND active_status = 1
@@ -59,7 +60,7 @@ BEGIN
                 child.ParentID,
                 child.nodeType,
                 parent.folderPath + CAST(child.ID AS VARCHAR(100)) + '/'
-            FROM qms.QMSdtlsFile_Log child WITH (NOLOCK)
+            FROM QMSdtlsFile_Log child WITH (NOLOCK)
             INNER JOIN FolderCTE parent ON child.ParentID = parent.ID
             WHERE 
                 child.active_status = 1
@@ -88,7 +89,7 @@ BEGIN
             ) THEN 1 ELSE 0 END,
             CASE WHEN EXISTS (
                 SELECT 1 
-                FROM qms.QMSdtlsFile_Log child WITH (NOLOCK)
+                FROM QMSdtlsFile_Log child WITH (NOLOCK)
                 WHERE child.ParentID = fh.ID
                     AND child.active_status = 1
                     AND child.nodeType = 0
@@ -103,7 +104,7 @@ BEGIN
             CASE WHEN fs.HasChildFolders = 1 THEN 'true' ELSE 'false' END AS hasChild,
             CASE WHEN fs.HasFiles = 1 THEN 'true' ELSE 'false' END AS hasFile,
             fh.folderPath
-        FROM qms.QMSdtlsFile_Log va WITH (NOLOCK)
+        FROM QMSdtlsFile_Log va WITH (NOLOCK)
         INNER JOIN #FileHierarchy fh ON va.ID = fh.ID
         INNER JOIN #FolderStatus fs ON va.ID = fs.FolderID
         WHERE 
@@ -132,4 +133,3 @@ BEGIN
         
         RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
     END CATCH;
-END;
