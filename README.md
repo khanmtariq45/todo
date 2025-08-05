@@ -1,281 +1,283 @@
-This is a publish file. I'm trying to create a new publish version for my repo by this command "npm run bump-version -- 3.252.243" And this is the "bump-version.ts" file. And in package.json we have this line ""bump-version": "ts-node ./tools/bump-version.ts","
+I have a requirement from client that they need a report of data for which SP is used is given below now please give me a query to generete that report without any filter 
+pick the tables and joins from the SP given below and provide me new query for sql then I will copy the data from sql and will paste in excel
+
+
+
+
+Ops Analyst of EPS has requested for data export from backend as there is no export in UI.
+
+Please share the export in below format in an excel file-
+
+1- FBM No.	
+2- Active (Y = Active, N = Inactive)
+3- Date Created	
+4- Status (Draft, Pending Approval or Sent)
+5- Date Sent	
+6- Domain	
+7- Primary Category	
+8- Secondary Category	
+9- Subject	
+10- Send to fleet (A1, A2, B, C1, C2, G, Fleet Office or multiple)
+
+
+
+ALTER PROCEDURE [dbo].[FBM_PR_FBMMESSAGE_SEARCH] 
+( 
+	 @USERID INT = NULL 
+	,@FBMNUMBER VARCHAR(100) = NULL 
+	,@DEPARTMENT INT = NULL 
+	,@FORUSER VARCHAR(100) = NULL 
+	,@ACTIVE INT = 0 
+	,@PRIMARYCATEGORY INT = NULL 
+	,@SECONDRYCATEGORY INT = NULL 
+	,@FROMDATE DATETIME = NULL 
+	,@TODATE DATETIME = NULL 
+	,@YEAR VARCHAR(10) = NULL 
+	,@SEARCHTEXTBY VARCHAR(100) = NULL 
+	,@ISDEPTSARCHONSENT VARCHAR(10) = NULL 
+	,@dtstatus FBM_UDTT_status readonly 
+	,@Domain VARCHAR(100) = NULL 
+	,@dtFleet FBM_UDTT_FleetList readonly 
+	,@dtVessel FBM_UDTT_VesselList readonly 
+	,@dtManagementCompany FBM_UDTT_ManagementCompList readonly 
+	,@dtOfficeDepartment FBM_UDTT_OfficeDptList readonly 
+	,@SORTBY VARCHAR(100) = NULL 
+	,@SORTDIRECTION INT = NULL 
+	,@PAGENUMBER INT = NULL 
+	,@PAGESIZE INT = NULL 
+	,@ISFETCHCOUNT INT OUTPUT 
+) 
+AS 
+BEGIN 
+	declare @vesselCount int = null, @FleetCount int = null, 
+		@ManagementCompanyCount int = null, @OfficeDepartmentCount int = null 
+	select @vesselCount = count(vessel) from @dtVessel 
+	select @FleetCount = count(Fleet) from @dtFleet 
+	select @ManagementCompanyCount = count(ManagementCompany) from @dtManagementCompany 
+	select @OfficeDepartmentCount = count(OfficeDept) from @dtOfficeDepartment 
  
-const { execSync } = require('child_process');
-
-const fs = require('fs');
-
-const path = require('path');
+	DECLARE @TBL_FOR_USER TABLE 
+	( COL_FOR_USER VARCHAR(100) NULL ) 
  
-class VersionBumper {
-
-    private version: string;
-
-    private packagePaths: string[];
-
-    private projectName: string;
+	IF(@FORUSER = 'ALL') 
+	BEGIN 
+		INSERT INTO @TBL_FOR_USER VALUES ('COMPANY'), ('OFFICE'), ('SHIP') 
+	END 
+	ELSE IF (@FORUSER = 'COMPANY') 
+	BEGIN 
+		INSERT INTO @TBL_FOR_USER VALUES ('COMPANY')
+	END 
+		ELSE IF (@FORUSER = 'OFFICE') 
+	BEGIN 
+		INSERT INTO @TBL_FOR_USER VALUES ('OFFICE') 
+	END 
+	ELSE IF (@FORUSER = 'SHIP') 
+	BEGIN 
+		INSERT INTO @TBL_FOR_USER VALUES('SHIP') 
+	END 		
  
-    constructor(version: string) {
-
-        this.version = version;
-
-        this.projectName = 'j3-crew-ui-ng';
-
-        this.packagePaths = [
-
-            path.resolve(__dirname, '..', 'package.json'), // Root package.json
-
-            path.resolve(__dirname, '..', 'projects', this.projectName, 'package.json'), // j3-crew-ui-ng package.json
-
-        ];
-
-    }
+	DECLARE @TEMPMESSAGETYPE TABLE 
+	( FBMID INT, FLDROWNUMBER BIGINT IDENTITY (1,1) ) 
  
-    // Run shell commands synchronously
-
-    private runCommand(command: string) {
-
-        try {
-
-            console.log(`Running command: ${command}`);
-
-            execSync(command, { stdio: 'inherit' });
-
-        } catch (error) {
-
-            console.error(`Error running command: ${command}`);
-
-            process.exit(1);
-
-        }
-
-    }
+	-- DRAFT 
+	IF('DRAFT' = (select status from @dtstatus where status = 'DRAFT') ) 
+	BEGIN 
+		INSERT INTO @TEMPMESSAGETYPE ( FBMID ) 
+			SELECT ID FROM FBM_MAIN 
+			WHERE FBM_STATUS IN ('DRAFT' , 'REWORK') 
+	END 
+	
+	-- PENDING APPROVAL 
+	IF('PENDINGAPPROVAL' = (select status from @dtstatus where status = 'PENDINGAPPROVAL') ) 
+	BEGIN 
+		INSERT INTO @TEMPMESSAGETYPE ( FBMID ) 
+			SELECT ID FROM FBM_MAIN 
+			WHERE FBM_STATUS = 'PENDINGAPPROVAL' 
+	END 
+	
+	-- SENT 
+	IF('SENT' = (select status from @dtstatus where status = 'SENT') ) 
+ BEGIN 
  
-    // Read and update the package.json version
-
-    private updatePackageVersions() {
-
-        this.packagePaths.forEach((packagePath) => {
-
-            if (!fs.existsSync(packagePath)) {
-
-                console.error(`package.json not found at ${packagePath}!`);
-
-                process.exit(1);
-
-            }
+ INSERT INTO @TEMPMESSAGETYPE 
+ ( 
+ FBMID 
+ ) 
+ SELECT ID FROM FBM_MAIN 
+ WHERE FBM_STATUS = 'SENT' 
  
-            const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
+ END 
+	
+	DECLARE @CURRUSERDEPT INT 
+	SELECT @CURRUSERDEPT = Dep_Code FROM LIB_USER WHERE USERID = @USERID 
+	
+	IF (@CURRUSERDEPT ! = @DEPARTMENT) 
+	BEGIN 	
+		SELECT * FROM 
+		( 
+			SELECT CASE WHEN @PAGENUMBER IS NOT NULL THEN ROW_NUMBER() OVER(ORDER BY C.DATE_SENT DESC) ELSE 0 END AS ROWNUM 
+				,C.ID ,C.FBM_NUMBER ,C.DATE_SENT ,C.SUBJECT 
+				,C.DEPARTMENT ,C.FOR_USER 
+				,ISNULL(REPLACE(C.BODY,CHAR(13),'<br>'),'') as BODY 
+				,CASE WHEN C.ATTCHMENTS = 1 THEN 'Y' ELSE 'N' END AS 'ATTCHMENTS' ,C.TOSYNC 
+				,CASE WHEN C.ACTIVE = 1 THEN 'Y' ELSE 'N' END AS 'ACTIVE' 
+				,C.SECONDRY_CATEGORY ,C.URGENT 
+				,C.MADE_INACTIVE_BY ,C.MADE_INACTIVE_ON ,C.CREATED_BY 
+				,C.CREATED_ON ,OD.VALUE AS 'DeptName' 
+				,FSP.NAME AS 'PRIMARY_CATEGORY' 
+				,isnull(DATE_SENT,'') as DATE_SENT1 
+				,[dbo].FN_GET_FBM_Attachment_Path(C.ID) AS 'FilePathIfSingle' 
+				,(CASE WHEN (SELECT COUNT(1) FROM FBM_READ_INFO WHERE FBM_ID = C.ID) > 0 THEN 1 ELSE 0 END) AS FBM_READ_FLAG 
+				,C.FBM_STATUS as 'FBM_STATUS' 
+			FROM FBM_MAIN C 
+				INNER JOIN INF_LIB_INOFFICE_DEPT OD ON C.DEPARTMENT = OD.ID 
+				INNER JOIN FBM_LIB_SYSTEMS_PARAMETERS FSP ON FSP.CODE = C.PRIMARY_CATEGORY 
+				INNER JOIN @TEMPMESSAGETYPE T ON T.FBMID = C.ID 
+			WHERE 
+				C.DEPARTMENT = ISNULL(@DEPARTMENT ,C.DEPARTMENT) 
+				AND (isnull(C.FBM_NUMBER,'') LIKE '%' + ISNULL(@FBMNUMBER, isnull(C.FBM_NUMBER,'')) + '%') 
+				AND ((C.[SUBJECT] LIKE '%' + ISNULL(@SEARCHTEXTBY,C.SUBJECT) + '%') OR (C.BODY LIKE '%' +ISNULL(@SEARCHTEXTBY,C.BODY)+ '%')) 
+				AND (C.ACTIVE = @ACTIVE) 
+				AND (
+						(@vesselCount = 0 and @FleetCount = 0 
+						and @ManagementCompanyCount = 0 and @OfficeDepartmentCount = 0) 
+						or exists 
+						( select 1 from fbm_assignment FA where c.uid = fbm_uid 
+							and FA.active_status = 1 
+							and (@vesselCount = 0 OR FA.vessel_uid in (select Vessel from @dtVessel)) 
+							and (@FleetCount = 0 OR FA.fleet_uid in (select Fleet from @dtFleet)) 
+							and (@ManagementCompanyCount = 0 OR FA.management_company_uid in (select ManagementCompany from @dtManagementCompany)) 
+							and (@OfficeDepartmentCount = 0 OR FA.office_department_id in (select OfficeDept from @dtOfficeDepartment)) 
+						) 
+					) 
+				AND (C.PRIMARY_CATEGORY = ISNULL(@PRIMARYCATEGORY,C.PRIMARY_CATEGORY)) 
+				AND (C.SECONDRY_CATEGORY = ISNULL(@SECONDRYCATEGORY,C.SECONDRY_CATEGORY)) 
+				AND (SUBSTRING(CONVERT(VARCHAR(10), C.CREATED_ON, 101) ,7,4) = ISNULL(@YEAR ,SUBSTRING(CONVERT(VARCHAR(10), C.CREATED_ON, 101) ,7,4))) 				 
+				AND (CONVERT(VARCHAR(10), C.DATE_SENT,112) > = CONVERT(VARCHAR(10), @FROMDATE , 112 ) OR @FROMDATE IS NULL) 
+				AND (CONVERT(VARCHAR(10), C.DATE_SENT,112) < = CONVERT(VARCHAR(10), @TODATE , 112 ) OR @TODATE IS NULL) 
+				AND (ltrim(FOR_USER) in (SELECT COL_FOR_USER FROM @TBL_FOR_USER)) 
+			)FINALTABLEITEMS 
+		WHERE ROWNUM between ((ISNULL(@PAGENUMBER,-1) - 1) * ISNULL(@PAGESIZE,1) + 1) AND (ISNULL(@PAGENUMBER,-1) * ISNULL(@PAGESIZE,-1)) 
+		ORDER BY CONVERT(VARCHAR(150),FINALTABLEITEMS.DATE_SENT ,112) DESC 
 
-            packageJson.version = this.version;
-
-            fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2), 'utf-8');
-
-            console.log(`Updated ${packagePath} to version: ${this.version}`);
-
-        });
-
-    }
+		IF ISNULL(@ISFETCHCOUNT,0) = 1 
+		BEGIN 
+			SELECT @ISFETCHCOUNT = COUNT(C.ID) 
+			FROM FBM_MAIN C 
+				INNER JOIN INF_LIB_INOFFICE_DEPT OD ON C.DEPARTMENT = OD.ID 
+				INNER JOIN FBM_LIB_SYSTEMS_PARAMETERS FSP ON FSP.CODE = C.PRIMARY_CATEGORY 
+				INNER JOIN @TEMPMESSAGETYPE T ON T.FBMID = C.ID 
+			WHERE 
+				C.DEPARTMENT = ISNULL(@DEPARTMENT ,C.DEPARTMENT) 
+				AND (isnull(C.FBM_NUMBER,'') LIKE '%' + ISNULL(@FBMNUMBER, isnull(C.FBM_NUMBER,'')) + '%') 
+				AND ((C.[SUBJECT] LIKE '%' + ISNULL(@SEARCHTEXTBY,C.SUBJECT) + '%') OR (C.BODY LIKE '%' +ISNULL(@SEARCHTEXTBY,C.BODY)+ '%')) 
+				AND (C.ACTIVE = @ACTIVE) 
+				AND (
+					(@vesselCount = 0 and @FleetCount = 0 
+						and @ManagementCompanyCount = 0 and @OfficeDepartmentCount = 0) 
+					or exists 
+					( select 1 from fbm_assignment FA where c.uid = fbm_uid and FA.active_status = 1 
+						and (@vesselCount = 0 OR FA.vessel_uid in (select Vessel from @dtVessel)) 
+						and (@FleetCount = 0 OR FA.fleet_uid in (select Fleet from @dtFleet)) 
+						and (@ManagementCompanyCount = 0 OR FA.management_company_uid in (select ManagementCompany from @dtManagementCompany)) 
+						and (@OfficeDepartmentCount = 0 OR FA.office_department_id in (select OfficeDept from @dtOfficeDepartment)) 
+						) 
+					) 
+				AND (C.PRIMARY_CATEGORY = ISNULL(@PRIMARYCATEGORY,C.PRIMARY_CATEGORY)) 
+				AND (C.PRIMARY_CATEGORY = ISNULL(@PRIMARYCATEGORY,C.PRIMARY_CATEGORY)) 
+				AND (C.SECONDRY_CATEGORY = ISNULL(@SECONDRYCATEGORY,C.SECONDRY_CATEGORY)) 
+				AND (SUBSTRING(CONVERT(VARCHAR(10), C.CREATED_ON, 101) ,7,4) = ISNULL(@YEAR ,SUBSTRING(CONVERT(VARCHAR(10), C.CREATED_ON, 101) ,7,4))) 
+				AND (CONVERT(VARCHAR(10), C.DATE_SENT,112) > = CONVERT(VARCHAR(10), @FROMDATE , 112 ) OR @FROMDATE IS NULL) 
+				AND (CONVERT(VARCHAR(10), C.DATE_SENT,112) < = CONVERT(VARCHAR(10), @TODATE , 112 ) OR @TODATE IS NULL) 
+				AND (ltrim(FOR_USER) in (SELECT COL_FOR_USER FROM @TBL_FOR_USER)) 
+		END 
+	END 
+	ELSE 
+	BEGIN 
+		SELECT * FROM 
+		( 
+			SELECT CASE WHEN @PAGENUMBER IS NOT NULL THEN ROW_NUMBER() OVER(ORDER BY C.DATE_SENT DESC) ELSE 0 END AS ROWNUM 
+				,C.ID ,C.FBM_NUMBER ,C.DATE_SENT ,C.SUBJECT 
+				,C.DEPARTMENT ,C.FOR_USER 
+				,ISNULL(REPLACE(C.BODY,CHAR(13),'<br>'),'') as BODY 
+				,CASE WHEN C.ATTCHMENTS = 1 THEN 'Y' ELSE 'N' END AS 'ATTCHMENTS' ,C.TOSYNC 
+				,CASE WHEN C.ACTIVE = 1 THEN 'Y' ELSE 'N' END AS 'ACTIVE' 
+				,C.SECONDRY_CATEGORY ,C.URGENT 
+				,C.MADE_INACTIVE_BY ,C.MADE_INACTIVE_ON ,C.CREATED_BY 
+				,C.CREATED_ON ,OD.VALUE AS 'DeptName' 
+				,FSP.NAME AS 'PRIMARY_CATEGORY' 
+				,isnull(DATE_SENT,'') as DATE_SENT1 
+				,[dbo].FN_GET_FBM_Attachment_Path(C.ID) AS 'FilePathIfSingle' 
+				,(CASE WHEN (SELECT COUNT(1) FROM FBM_READ_INFO WHERE FBM_ID = C.ID) > 0 THEN 1 ELSE 0 END) AS FBM_READ_FLAG 
+				,C.FBM_STATUS as 'FBM_STATUS' 
+			FROM FBM_MAIN C 
+				INNER JOIN INF_LIB_INOFFICE_DEPT OD ON C.DEPARTMENT = OD.ID 
+				INNER JOIN FBM_LIB_SYSTEMS_PARAMETERS FSP ON FSP.CODE = C.PRIMARY_CATEGORY 
+				INNER JOIN @TEMPMESSAGETYPE T ON T.FBMID = C.ID 
+			WHERE 
+				C.DEPARTMENT = CASE WHEN ((select status from @dtstatus where status = 'SENT') = 'SENT') THEN ISNULL(@DEPARTMENT ,C.DEPARTMENT) 
+				WHEN @USERID = 1 THEN C.DEPARTMENT 
+				ELSE ISNULL(@DEPARTMENT ,C.DEPARTMENT) END 
+				AND (isnull(C.FBM_NUMBER,'') LIKE '%' + ISNULL(@FBMNUMBER, isnull(C.FBM_NUMBER,'')) + '%') 
+				AND ((C.[SUBJECT] LIKE '%' + ISNULL(@SEARCHTEXTBY,C.SUBJECT) + '%') OR (C.BODY LIKE '%' +ISNULL(@SEARCHTEXTBY,C.BODY)+ '%')) 
+				AND (C.ACTIVE = @ACTIVE) 
+				AND ( (@vesselCount = 0 and @FleetCount = 0 
+					and @ManagementCompanyCount = 0 and @OfficeDepartmentCount = 0) 
+						or exists 
+						(	select 1 from fbm_assignment FA where c.uid = fbm_uid and FA.active_status = 1 
+							and (@vesselCount = 0 OR FA.vessel_uid in (select Vessel from @dtVessel)) 
+							and (@FleetCount = 0 OR FA.fleet_uid in (select Fleet from @dtFleet)) 
+							and (@ManagementCompanyCount = 0 OR FA.management_company_uid in (select ManagementCompany from @dtManagementCompany)) 
+							and (@OfficeDepartmentCount = 0 OR FA.office_department_id in (select OfficeDept from @dtOfficeDepartment)) 
+						) 
+					) 
+				AND (C.PRIMARY_CATEGORY = ISNULL(@PRIMARYCATEGORY,C.PRIMARY_CATEGORY)) 
+				AND (C.PRIMARY_CATEGORY = ISNULL(@PRIMARYCATEGORY,C.PRIMARY_CATEGORY)) 
+				AND (C.SECONDRY_CATEGORY = ISNULL(@SECONDRYCATEGORY,C.SECONDRY_CATEGORY)) 
+				AND (SUBSTRING(CONVERT(VARCHAR(10), C.CREATED_ON, 101) ,7,4) = ISNULL(@YEAR ,SUBSTRING(CONVERT(VARCHAR(10), C.CREATED_ON, 101) ,7,4))) 						
+				AND (CONVERT(VARCHAR(10), C.DATE_SENT,112) > = CONVERT(VARCHAR(10), @FROMDATE , 112 ) OR @FROMDATE IS NULL) 
+				AND (CONVERT(VARCHAR(10), C.DATE_SENT,112) < = CONVERT(VARCHAR(10), @TODATE , 112 ) OR @TODATE IS NULL) 
+				AND (ltrim(FOR_USER) in (SELECT COL_FOR_USER FROM @TBL_FOR_USER)) 
+			)FINALTABLEITEMS 
+		WHERE ROWNUM between ((ISNULL(@PAGENUMBER,-1) - 1) * ISNULL(@PAGESIZE,1) + 1) AND (ISNULL(@PAGENUMBER,-1) * ISNULL(@PAGESIZE,-1)) 
+		ORDER BY CONVERT(VARCHAR(150),FINALTABLEITEMS.DATE_SENT ,112) DESC 
  
-    private deleteDistFolder() {
-
-        const distPath = path.resolve(__dirname, '..', 'dist');
-
-        if (fs.existsSync(distPath)) {
-
-            console.log(`Deleting existing dist folder at: ${distPath}`);
-
-            fs.rmSync(distPath, { recursive: true, force: true });
-
-            console.log('dist folder deleted.');
-
-        }
-
-    }
- 
- 
-    public bumpVersion() {
-
-        try {
-
-            // Step 1: Stash changes
-
-            this.runCommand('git stash');
- 
-            // Step 2: Checkout to dev and pull the latest updates
-
-            this.runCommand('git checkout dev');
-
-            this.runCommand('git pull');
- 
-            // Step 3: Create and checkout to a new version branch
-
-            const versionBranch = `release/${this.version}`;
-
-            this.runCommand(`git checkout -b ${versionBranch}`);
- 
-            // Step 4: Update the version in package.json
-
-            this.updatePackageVersions();
- 
-            // Step 5: Delete the dist folder
-
-            this.deleteDistFolder();
- 
-            // Step 6: Build the project using Angular CLI
-
-            this.runCommand(`ng build ${this.projectName}`);
- 
-            // Step 7: Publish the npm package
-
-            const distPath = path.resolve(__dirname, '..', 'dist', this.projectName);
-
-            this.runCommand(`cd ${distPath} && npm publish`);
- 
-            // Step 8: Commit the changes and push to the new branch
-
-            this.runCommand('git add .');
-
-            this.runCommand(`git commit -m "Published version: ${this.version}"`);
-
-            this.runCommand(`git push origin ${versionBranch}`);
- 
-            this.runCommand(`git stash apply`);
- 
-            console.log('Version bump process completed successfully!');
-
-        } catch (error) {
-
-            console.error('Error during version bumping:', error);
-
-            this.runCommand(`git stash apply`);
-
-            process.exit(1);
-
-        }
-
-    }
-
-}
- 
-// Main Execution
-
-const args = process.argv.slice(2);
-
-const version = args[0];
- 
-if (!version) {
-
-    console.error('Version argument is required. Usage: npm run bump-version -- <version>');
-
-    process.exit(1);
-
-}
- 
-const versionBumper = new VersionBumper(version);
-
-versionBumper.bumpVersion();
- 
- 
-This is the error that I'm facing
- 
-PS C:\Repos\j3-crew-ng> npm run bump-version -- 3.252.244
-
-npm warn Unknown project config "always-auth". This will stop working in the next major version of npm.
- 
-> j3-crew-ng@3.253.132 bump-version
-> ts-node ./tools/bump-version.ts 3.252.244
- 
-Running command: git stash
-
-No local changes to save
-
-Running command: git checkout dev
-
-Already on 'dev'
-
-Your branch is up to date with 'origin/dev'.
-
-Running command: git pull
-
-Building Angular Package
-
-(node:28392) Warning: Accessing non-existent property 'lineno' of module exports inside circular dependency
-
-(Use `node --trace-warnings ...` to show where the warning was created)
-
-(node:28392) Warning: Accessing non-existent property 'column' of module exports inside circular dependency
-
-(node:28392) Warning: Accessing non-existent property 'filename' of module exports inside circular dependency
-
-(node:28392) Warning: Accessing non-existent property 'lineno' of module exports inside circular dependency
-
-(node:28392) Warning: Accessing non-existent property 'column' of module exports inside circular dependency
-
-(node:28392) Warning: Accessing non-existent property 'filename' of module exports inside circular dependency
- 
-------------------------------------------------------------------------------
-
-Building entry point 'j3-crew-ui-ng'
-
-------------------------------------------------------------------------------
-
-Compiling TypeScript sources through ngc
-
-WARNING: Unexpected '}' at 39:1.
-
-WARNING: Unexpected '}' at 40:0.
-
-WARNING: Invalid property name '> span {
-&.arrow-close {
-
-                right' at 29:1. Ignoring.
-
-WARNING: Invalid selector '}
-
-}
- 
-.tree-container' at 39:1. Ignoring.
-
-WARNING: autoprefixer: C:\Repos\j3-crew-ng\projects\j3-crew-ui-ng\src\lib\components\risk-assessment\risk-assessment-linked-sections\risk-assessment-details-section\risk-assessment-details-section.component.css:90:3: end value has mixed support, consider using flex-end instead
-
-WARNING: autoprefixer: C:\Repos\j3-crew-ng\projects\j3-crew-ui-ng\src\lib\components\risk-assessment\risk-assessment-linked-sections\risk-assessment-details-section\risk-assessment-details-section.component.css:106:3: end value has mixed support, consider using flex-end instead
-
-WARNING: autoprefixer: C:\Repos\j3-crew-ng\projects\j3-crew-ui-ng\src\lib\components\risk-assessment\risk-assessment-linked-sections\risk-assessment-job-information-section\risk-assessment-job-information-section.component.css:37:3: end value has mixed support, consider using flex-end instead
-
-WARNING: autoprefixer: C:\Repos\j3-crew-ng\projects\j3-crew-ui-ng\src\lib\components\risk-assessment\risk-assessment-linked-sections\risk-assessment-job-information-section\risk-assessment-job-information-section.component.css:53:3: end value has mixed support, consider using flex-end instead
-
-ERROR: projects/j3-crew-ui-ng/src/lib/components/risk-assessment/risk-assessment-linked-details/risk-assessment-details.component.html(135,31): Property 'cellStyle' does not exist on type 'string | IThreshold'.
-
-  Property 'cellStyle' does not exist on type 'string'.
-
-projects/j3-crew-ui-ng/src/lib/components/risk-assessment/risk-assessment-linked-details/risk-assessment-details.component.html(136,12): Property 'icon' does not exist on type 'string | IThreshold'.
-
-  Property 'icon' does not exist on type 'string'.
-
-projects/j3-crew-ui-ng/src/lib/components/risk-assessment/risk-assessment-linked-details/risk-assessment-details.component.html(136,67): Property 'cellStyle' does not exist on type 'string | IThreshold'.
-
-  Property 'cellStyle' does not exist on type 'string'.
-
-projects/j3-crew-ui-ng/src/lib/components/risk-assessment/risk-assessment-linked-details/risk-assessment-details.component.html(136,163): Property 'value' does not exist on type 'string | IThreshold'.
-
-  Property 'value' does not exist on type 'string'.
- 
-An unhandled exception occurred: projects/j3-crew-ui-ng/src/lib/components/risk-assessment/risk-assessment-linked-details/risk-assessment-details.component.html(135,31): Property 'cellStyle' does not exist on type 'string | IThreshold'.
-
-  Property 'cellStyle' does not exist on type 'string'.
-
-projects/j3-crew-ui-ng/src/lib/components/risk-assessment/risk-assessment-linked-details/risk-assessment-details.component.html(136,12): Property 'icon' does not exist on type 'string | IThreshold'.
-
-  Property 'icon' does not exist on type 'string'.
-
-projects/j3-crew-ui-ng/src/lib/components/risk-assessment/risk-assessment-linked-details/risk-assessment-details.component.html(136,67): Property 'cellStyle' does not exist on type 'string | IThreshold'.
-
-  Property 'cellStyle' does not exist on type 'string'.
-
-projects/j3-crew-ui-ng/src/lib/components/risk-assessment/risk-assessment-linked-details/risk-assessment-details.component.html(136,163): Property 'value' does not exist on type 'string | IThreshold'.
-
-  Property 'value' does not exist on type 'string'.
- 
-See "C:\Users\ABDULH~1\AppData\Local\Temp\ng-e5QgQK\angular-errors.log" for further details.
-
- 
+		IF ISNULL(@ISFETCHCOUNT,0) = 1 
+		BEGIN 
+			SELECT @ISFETCHCOUNT = COUNT(C.ID) 
+			FROM FBM_MAIN C 
+				INNER JOIN INF_LIB_INOFFICE_DEPT OD ON C.DEPARTMENT = OD.ID 
+				INNER JOIN FBM_LIB_SYSTEMS_PARAMETERS FSP ON FSP.CODE = C.PRIMARY_CATEGORY 
+				INNER JOIN @TEMPMESSAGETYPE T ON T.FBMID = C.ID 
+			WHERE 
+				C.DEPARTMENT = CASE WHEN 
+				(
+					(select status from @dtstatus where status = 'SENT') = 'SENT') 
+					THEN ISNULL(@DEPARTMENT ,C.DEPARTMENT) 
+					
+					WHEN @USERID = 1 THEN C.DEPARTMENT 
+					ELSE ISNULL(@DEPARTMENT ,C.DEPARTMENT) 
+					END 
+					AND (isnull(C.FBM_NUMBER,'') LIKE '%' + ISNULL(@FBMNUMBER, isnull(C.FBM_NUMBER,'')) + '%') 
+					AND ((C.[SUBJECT] LIKE '%' + ISNULL(@SEARCHTEXTBY,C.SUBJECT) + '%') OR (C.BODY LIKE '%' +ISNULL(@SEARCHTEXTBY,C.BODY)+ '%')) 
+					AND (C.ACTIVE = @ACTIVE) 
+					AND ( (@vesselCount = 0 and @FleetCount = 0 
+							and @ManagementCompanyCount = 0 and @OfficeDepartmentCount = 0) 
+							or exists 
+							( select 1 from fbm_assignment FA where c.uid = fbm_uid and FA.active_status = 1 
+								and (@vesselCount = 0 OR FA.vessel_uid in (select Vessel from @dtVessel)) 
+								and (@FleetCount = 0 OR FA.fleet_uid in (select Fleet from @dtFleet)) 
+								and (@ManagementCompanyCount = 0 OR FA.management_company_uid in (select ManagementCompany from @dtManagementCompany)) 
+								and (@OfficeDepartmentCount = 0 OR FA.office_department_id in (select OfficeDept from @dtOfficeDepartment)) 
+								) 
+						) 
+					AND (C.PRIMARY_CATEGORY = ISNULL(@PRIMARYCATEGORY,C.PRIMARY_CATEGORY)) 
+					AND (C.PRIMARY_CATEGORY = ISNULL(@PRIMARYCATEGORY,C.PRIMARY_CATEGORY)) 
+					AND (C.SECONDRY_CATEGORY = ISNULL(@SECONDRYCATEGORY,C.SECONDRY_CATEGORY)) 
+					AND (SUBSTRING(CONVERT(VARCHAR(10), C.CREATED_ON, 101) ,7,4) = ISNULL(@YEAR ,SUBSTRING(CONVERT(VARCHAR(10), C.CREATED_ON, 101) ,7,4))) 
+					AND (CONVERT(VARCHAR(10), C.DATE_SENT,112) > = CONVERT(VARCHAR(10), @FROMDATE , 112 ) OR @FROMDATE IS NULL) 
+					AND (CONVERT(VARCHAR(10), C.DATE_SENT,112) < = CONVERT(VARCHAR(10), @TODATE , 112 ) OR @TODATE IS NULL) 
+					AND (ltrim(FOR_USER) in (SELECT COL_FOR_USER FROM @TBL_FOR_USER)) 
+		END 
+	END 
+END 
