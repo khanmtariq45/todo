@@ -1,15 +1,15 @@
-please sort it by questionnaires
-1.1.1
-01.01.02
-1.1.3.a
-1.1.3.b
-1.1.3.c
-1.1.4
-1.1.5.a
-1.1.5.b
-1.1.6
-B
-2
-D
-3
+IF (@SORTBY IS NULL OR @SORTBY = 'Question_No')
+		BEGIN
+			SET @ORDERCLAUSE = '
+			ORDER BY
+				TRY_CAST(LEFT(ISNULL(Level_1, ''''), PATINDEX(''%[^0-9]%'', ISNULL(Level_1, '''') + ''a'') - 1) AS INT),
+				SUBSTRING(ISNULL(Level_1, ''''), PATINDEX(''%[^0-9]%'', ISNULL(Level_1, '''') + ''a''), LEN(ISNULL(Level_1, ''''))),
 
+				TRY_CAST(LEFT(ISNULL(Level_2, ''''), PATINDEX(''%[^0-9]%'', ISNULL(Level_2, '''') + ''a'') - 1) AS INT),
+				SUBSTRING(ISNULL(Level_2, ''''), PATINDEX(''%[^0-9]%'', ISNULL(Level_2, '''') + ''a''), LEN(ISNULL(Level_2, ''''))),
+
+				TRY_CAST(LEFT(ISNULL(Level_3, ''''), PATINDEX(''%[^0-9]%'', ISNULL(Level_3, '''') + ''a'') - 1) AS INT),
+				SUBSTRING(ISNULL(Level_3, ''''), PATINDEX(''%[^0-9]%'', ISNULL(Level_3, '''') + ''a''), LEN(ISNULL(Level_3, '''')))
+			'
+		END
+	ELSE
