@@ -43,35 +43,46 @@ BEGIN
     WHERE m.FieldID = @FieldID
         AND m.Active_Status = 0;
 
-    -- Insert new values using IDENTITY for safe ID generation
-    WITH NewRows AS (
-        SELECT n.Value
+    -- Insert new values with concurrency-safe ID generation
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        DECLARE @NextID INT;
+        SELECT @NextID = ISNULL(MAX(ID), 0) + 1 
+        FROM JMS_Safety_Observation_MandatoryFor WITH (UPDLOCK, SERIALIZABLE);
+
+        INSERT INTO JMS_Safety_Observation_MandatoryFor (
+            ID,
+            FieldID,
+            MandatoryFor,
+            Date_Of_Creation,
+            Created_By,
+            Date_Of_Modification,
+            Modified_By,
+            Active_Status
+        )
+        SELECT 
+            @NextID + ROW_NUMBER() OVER (ORDER BY Value),
+            @FieldID,
+            Value,
+            GETDATE(),
+            @Modified_By,
+            GETDATE(),
+            @Modified_By,
+            1
         FROM @NewMandatoryFor n
         WHERE NOT EXISTS (
             SELECT 1 
             FROM JMS_Safety_Observation_MandatoryFor e 
             WHERE e.FieldID = @FieldID 
                 AND e.MandatoryFor = n.Value
-        )
-    )
-    INSERT INTO JMS_Safety_Observation_MandatoryFor (
-        ID,
-        FieldID,
-        MandatoryFor,
-        Date_Of_Creation,
-        Created_By,
-        Date_Of_Modification,
-        Modified_By,
-        Active_Status
-    )
-    SELECT 
-        NEXT VALUE FOR JMS_Safety_Observation_MandatoryFor_Seq,
-        @FieldID,
-        Value,
-        GETDATE(),
-        @Modified_By,
-        GETDATE(),
-        @Modified_By,
-        1
-    FROM NewRows;
+        );
+
+        COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH;
 END;
