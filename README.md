@@ -39,9 +39,12 @@ BEGIN
 		
 	IF (@SORTBY IS NULL OR @SORTBY = 'Question_No')
 		BEGIN
+			-- Changed to binary collation for proper alphanumeric sorting with uppercase first
 			SET @ORDERCLAUSE = '
     ORDER BY
-        ISNULL(Level_1, '''') COLLATE Latin1_General_CS_AS
+        ISNULL(Level_1, '''') COLLATE Latin1_General_BIN,
+        ISNULL(Level_2, '''') COLLATE Latin1_General_BIN,
+        ISNULL(Level_3, '''') COLLATE Latin1_General_BIN
     ' 
 		END
 	ELSE
