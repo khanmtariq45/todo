@@ -1,9 +1,35 @@
--- =============================================
--- Author:		<Reshma>
--- Create date: <17-12-2016>
--- Description:	<To display the Questionnaire details in grid>
--- =============================================
---exec VET_Get_QuestionnaireDetails 2,null,null,null,1,20,1
+I need alphanumeric sorting of mix alphanumeric value on question_no one example is below if we provide input
+
+1.1.1
+1.1.2
+1.1.3.a
+1.1.3.b
+1.1.3.c
+1.1.4
+1.1.5.a
+1.1.5.b
+1.1.6
+B
+2
+D
+3
+
+Out put should be show like this :
+1.1.1
+1.1.2
+1.1.3.a
+1.1.3.b
+1.1.3.c
+1.1.4
+1.1.5.a
+1.1.5.b
+1.1.6
+2
+3
+B
+D
+
+
 CREATE OR ALTER PROCEDURE [dbo].[VET_Get_QuestionnaireDetails]
 	(
 	 @Questionnaire_ID INT	                   -- Questionnaire ID
