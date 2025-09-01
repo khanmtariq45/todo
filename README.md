@@ -1,33 +1,41 @@
 I need alphanumeric sorting of mix alphanumeric value on question_no one example is below if we provide input
 
-1.1.1
-1.1.2
-1.1.3.a
-1.1.3.b
-1.1.3.c
-1.1.4
-1.1.5.a
-1.1.5.b
-1.1.6
-B
-2
-D
-3
+1.1.1  
+1.1.2  
+1.1.6  
+1.1.a  
+1.1.c  
+A1.B1.C1
+a1.b1.c1
+A1.A1.A1
+a1.a1.a1
+1.1a.a  
+1.1a.b  
+1a.1.4  
+1a.1.b  
+2aa  
+333DD  
+B11  
+DDD
 
 Out put should be show like this :
-1.1.1
-1.1.2
-1.1.3.a
-1.1.3.b
-1.1.3.c
-1.1.4
-1.1.5.a
-1.1.5.b
-1.1.6
-2
-3
-B
-D
+1.1.1  
+1.1.2  
+1.1.6  
+1.1.a  
+1.1.c  
+1.1a.a  
+1.1a.b  
+1a.1.4  
+1a.1.b  
+2aa  
+333DD  
+A1.A1.A1  
+A1.B1.C1  
+a1.a1.a1  
+a1.b1.c1  
+B11  
+DDD
 
 
 CREATE OR ALTER PROCEDURE [dbo].[VET_Get_QuestionnaireDetails]
