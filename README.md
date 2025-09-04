@@ -33,53 +33,56 @@ BEGIN
 
 		CREATE INDEX IX_NeededFolders ON #NeededFolders(ID);
 
-		-- File hierarchy CTE - Modified to include files in path construction
-		WITH FileHierarchy AS (
-			-- Level 0 (root) - we just use \ for root
+		-- First, build the folder hierarchy only (to establish the base paths)
+		WITH FolderHierarchy AS (
+			-- Level 0 (root)
 			SELECT 
 				f.ID,
 				f.ParentID,
 				f.logFileId,
-				f.nodeType,
 				CAST('\' AS VARCHAR(1000)) AS filterPath,
 				0 AS LEVEL,
 				CAST('Documents\' + f.logFileId + '\' AS VARCHAR(1000)) AS FullPath
 			FROM QMSdtlsFile_Log f WITH (NOLOCK)
 			WHERE f.ParentID = 0
 				AND f.active_status = 1
+				AND f.nodeType = 1
 				AND EXISTS (SELECT 1 FROM #NeededFolders nf WHERE nf.ID = f.ID)
 			
 			UNION ALL
 			
-			-- Children (include both files and folders)
+			-- Child folders
 			SELECT 
 				child.ID,
 				child.ParentID,
 				child.logFileId,
-				child.nodeType,
-				-- For files, don't add trailing backslash to filterPath
-				CASE 
-					WHEN child.nodeType = 1 
-					THEN CAST(parent.filterPath + child.logFileId + '\' AS VARCHAR(1000))
-					ELSE CAST(parent.filterPath + child.logFileId AS VARCHAR(1000))
-				END AS filterPath,
-				parent.LEVEL + 1 AS LEVEL,
-				-- For files, don't add trailing backslash to FullPath
-				CASE 
-					WHEN child.nodeType = 1
-					THEN CAST(parent.FullPath + child.logFileId + '\' AS VARCHAR(1000))
-					ELSE CAST(parent.FullPath + child.logFileId AS VARCHAR(1000))
-				END AS FullPath
+				CAST(parent.filterPath + child.logFileId + '\' AS VARCHAR(1000)),
+				parent.LEVEL + 1,
+				CAST(parent.FullPath + child.logFileId + '\' AS VARCHAR(1000))
 			FROM QMSdtlsFile_Log child WITH (NOLOCK)
-			INNER JOIN FileHierarchy parent ON child.ParentID = parent.ID
+			INNER JOIN FolderHierarchy parent ON child.ParentID = parent.ID
 			WHERE child.active_status = 1
+				AND child.nodeType = 1
 				AND EXISTS (SELECT 1 FROM #NeededFolders nf WHERE nf.ID = child.ID)
 		)
-		-- Final Output
+		-- Store folder paths in a temp table
+		SELECT 
+			ID,
+			filterPath,
+			FullPath
+		INTO #FolderPaths
+		FROM FolderHierarchy;
+
+		CREATE INDEX IX_FolderPaths_ID ON #FolderPaths(ID);
+
+		-- Final Output with proper path construction for both files and folders
 		SELECT 
 			va.date_of_Creatation AS dateCreated,
 			ISNULL(fi.date_of_creatation, va.date_of_creatation) AS dateModified,
-			ISNULL(fh.filterPath, '') AS filterPath,
+			CASE 
+				WHEN va.nodeType = 1 THEN ISNULL(fp.filterPath, '')
+				ELSE ISNULL(fp.filterPath, '') + va.logFileId
+			END AS filterPath,
 			CASE 
 				WHEN va.nodeType = 1
 					AND EXISTS (
@@ -106,13 +109,20 @@ BEGIN
 					THEN RIGHT(va.logFileId, CHARINDEX('.', REVERSE(va.logFileId)) - 1)
 				ELSE 'Folder'
 			END AS type,
-			ISNULL(fh.FullPath, '') AS fullPath,
+			CASE 
+				WHEN va.nodeType = 1 THEN ISNULL(fp.FullPath, '')
+				ELSE ISNULL(fp.FullPath, '') + va.logFileId
+			END AS fullPath,
 			CASE 
 				WHEN va.nodeType = 1 THEN NULL
 				ELSE va.version
 			END AS fileVersion
 		FROM QMSdtlsFile_Log va WITH (NOLOCK)
-		LEFT JOIN FileHierarchy fh ON va.ID = fh.ID
+		LEFT JOIN #FolderPaths fp ON 
+			CASE 
+				WHEN va.nodeType = 1 THEN va.ID
+				ELSE va.ParentID
+			END = fp.ID
 		LEFT JOIN QMS_FileVersionInfo fi WITH (NOLOCK) 
 			ON va.ID = fi.FileId
 			AND va.version = fi.Version
@@ -128,6 +138,7 @@ BEGIN
 		-- Cleanup temporary tables
 		DROP TABLE #AccessibleFolders;
 		DROP TABLE #NeededFolders;
+		DROP TABLE #FolderPaths;
 
 	END TRY
 	BEGIN CATCH
@@ -140,6 +151,8 @@ BEGIN
 			DROP TABLE #AccessibleFolders;
 		IF OBJECT_ID('tempdb..#NeededFolders') IS NOT NULL
 			DROP TABLE #NeededFolders;
+		IF OBJECT_ID('tempdb..#FolderPaths') IS NOT NULL
+			DROP TABLE #FolderPaths;
 
 		EXEC inf_log_write 'qms', 'QMS', 'SP_Get_QMS_Document_Tree', 1, 'SP_Get_QMS_Document_Tree', @ErrorMessage;
 		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
