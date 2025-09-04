@@ -33,8 +33,9 @@ BEGIN
 
 		CREATE INDEX IX_NeededFolders ON #NeededFolders(ID);
 
-		-- File hierarchy CTE
+		-- File hierarchy CTE - Modified to include files in path construction
 		WITH FileHierarchy AS (
+			-- Level 0 (root) - we just use \ for root
 			SELECT 
 				f.ID,
 				f.ParentID,
@@ -46,23 +47,29 @@ BEGIN
 			FROM QMSdtlsFile_Log f WITH (NOLOCK)
 			WHERE f.ParentID = 0
 				AND f.active_status = 1
-				AND f.nodeType = 1
 				AND EXISTS (SELECT 1 FROM #NeededFolders nf WHERE nf.ID = f.ID)
 			
 			UNION ALL
 			
+			-- Children (include both files and folders)
 			SELECT 
 				child.ID,
 				child.ParentID,
 				child.logFileId,
 				child.nodeType,
-				CAST(parent.filterPath + child.logFileId + '\' AS VARCHAR(1000)),
-				parent.LEVEL + 1,
+				-- For files, don't add trailing backslash to filterPath
+				CASE 
+					WHEN child.nodeType = 1 
+					THEN CAST(parent.filterPath + child.logFileId + '\' AS VARCHAR(1000))
+					ELSE CAST(parent.filterPath + child.logFileId AS VARCHAR(1000))
+				END AS filterPath,
+				parent.LEVEL + 1 AS LEVEL,
+				-- For files, don't add trailing backslash to FullPath
 				CASE 
 					WHEN child.nodeType = 1
-						THEN CAST(parent.FullPath + child.logFileId + '\' AS VARCHAR(1000))
+					THEN CAST(parent.FullPath + child.logFileId + '\' AS VARCHAR(1000))
 					ELSE CAST(parent.FullPath + child.logFileId AS VARCHAR(1000))
-				END
+				END AS FullPath
 			FROM QMSdtlsFile_Log child WITH (NOLOCK)
 			INNER JOIN FileHierarchy parent ON child.ParentID = parent.ID
 			WHERE child.active_status = 1
