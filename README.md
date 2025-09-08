@@ -1,160 +1,70 @@
-CREATE OR ALTER PROCEDURE [qms].[SP_Get_QMS_Document_Tree] 
-@UserId INT
-AS
-BEGIN
-	BEGIN TRY
-		SET NOCOUNT ON;
+{
+    "Execution_date": "2025-09-05T04:24:46.607Z",
+    "Module_Code": "jms",
+    "Vessel_id": 733,
+    "status": "E",
+    "log": "QueryFailedError: Error: Incorrect syntax near the keyword \"with\". If this statement is a common table expression, an xmlnamespaces clause or a change tracking context clause, the previous statement must be terminated with a semicolon.",
+    "Function_Code": "JMS_Get_Safety_Observation_Process",
+    "name": "V3253412JMSGetSafetyObservationProcess1756811019895"
+  }
 
-		-- Create temporary table for accessible folders
-		CREATE TABLE #AccessibleFolders (FolderID INT PRIMARY KEY);
+import { MigrationUtilsService } from 'j2utils';
+import { MigrationInterface, QueryRunner } from 'typeorm';
+/**
+   * @author Muhammad Tariq
+   * @description Added SP JMS_Get_Safety_Observation_Process
+   * @param queryRunner
+   * @Menu_Script - No
+   * @environment - All
+   * @Executed_On - Office and Vessel
+   * @clients - All
+   * @SQL_MAIN_PR - https://dev.azure.com/jibe-erp/JiBe/_git/sql-jibe-main/pullrequest/155724
+   * @SQL_Ship_PR - https://dev.azure.com/jibe-erp/JiBe/_git/sql-jibe-ship/pullrequest/155726
+   * @approved_by Zakhar.
+   */
+export class V3253412JMSGetSafetyObservationProcess1756811019895 implements MigrationInterface {
+
+    public async up(queryRunner: QueryRunner): Promise<void> {
+    const className = this.constructor.name;
+    try {
+            await queryRunner.query(`CREATE OR ALTER PROCEDURE [dbo].[JMS_Get_Safety_Observation_Process] 
+AS BEGIN
+
+SET NOCOUNT ON;
+
+BEGIN TRY
+    SELECT sop.id, sop.field, sop.available,
+        string_agg(jlw.status_displayName, ', ') 'mandatory For'
+    from JMS_Safety_Observation_Process sop With (NOLOCK)
+        left join JMS_Safety_Observation_MandatoryFor fmc on sop.id = fmc.fieldid and fmc.active_status = 1
+	left join JMS_LIB_Workflow jlw ON fmc.MandatoryFor = jlw.id and jlw.active_status = 1
+where sop.active_status = 1
+group by sop.id, sop.field, sop.available
+
+END TRY
+    BEGIN CATCH
+    DECLARE @ErrorMessage NVARCHAR(4000);
+		DECLARE @ErrorSeverity INT;
+		DECLARE @ErrorState INT;
+		DECLARE @logMessage VARCHAR(MAX);
 		
-		INSERT INTO #AccessibleFolders
-		SELECT DISTINCT FolderID
-		FROM QMS_User_Folder_Access WITH (NOLOCK)
-		WHERE UserID = @UserId;
+		SELECT @ErrorMessage = ERROR_MESSAGE()
+			,@ErrorSeverity = ERROR_SEVERITY()
+			,@ErrorState = ERROR_STATE();
 
-		-- Create index on temp table
-		CREATE INDEX IX_AccessibleFolders ON #AccessibleFolders(FolderID);
+		SET @logMessage = CONCAT('Failed! ErrorMessage:', @ErrorMessage,', ErrorSeverity:',@ErrorSeverity,', ErrorState:',@ErrorState);
 
-		-- Get all needed folders (accessible + their ancestors)
-		WITH AllNeededFolders AS (
-			SELECT FolderID AS ID FROM #AccessibleFolders
-			UNION ALL
-			SELECT f.ParentID
-			FROM QMSdtlsFile_Log f WITH (NOLOCK)
-			INNER JOIN AllNeededFolders anf ON f.ID = anf.ID
-			WHERE f.ParentID != 0
-			AND f.active_status = 1
-		),
-		DistinctNeededFolders AS (
-			SELECT DISTINCT ID FROM AllNeededFolders
-		)
-		SELECT ID INTO #NeededFolders FROM DistinctNeededFolders;
+		EXEC [dbo].[inf_log_write] 'jms',NULL,'JMS_Get_Safety_Observation_Process',0,'Exception occurred in SP',@logMessage,'sql',1,0;
 
-		CREATE INDEX IX_NeededFolders ON #NeededFolders(ID);
-
-		-- First, build the folder hierarchy only (to establish the base paths)
-		WITH FolderHierarchy AS (
-			-- Level 0 (root)
-			SELECT 
-				f.ID,
-				f.ParentID,
-				f.logFileId,
-				CAST('\' AS VARCHAR(1000)) AS filterPath,
-				0 AS LEVEL,
-				CAST('Documents\' + f.logFileId + '\' AS VARCHAR(1000)) AS FullPath
-			FROM QMSdtlsFile_Log f WITH (NOLOCK)
-			WHERE f.ParentID = 0
-				AND f.active_status = 1
-				AND f.nodeType = 1
-				AND EXISTS (SELECT 1 FROM #NeededFolders nf WHERE nf.ID = f.ID)
-			
-			UNION ALL
-			
-			-- Child folders
-			SELECT 
-				child.ID,
-				child.ParentID,
-				child.logFileId,
-				CAST(parent.filterPath + child.logFileId + '\' AS VARCHAR(1000)),
-				parent.LEVEL + 1,
-				CAST(parent.FullPath + child.logFileId + '\' AS VARCHAR(1000))
-			FROM QMSdtlsFile_Log child WITH (NOLOCK)
-			INNER JOIN FolderHierarchy parent ON child.ParentID = parent.ID
-			WHERE child.active_status = 1
-				AND child.nodeType = 1
-				AND EXISTS (SELECT 1 FROM #NeededFolders nf WHERE nf.ID = child.ID)
-		)
-		-- Store folder paths in a temp table
-		SELECT 
-			ID,
-			filterPath,
-			FullPath
-		INTO #FolderPaths
-		FROM FolderHierarchy;
-
-		CREATE INDEX IX_FolderPaths_ID ON #FolderPaths(ID);
-
-		-- Final Output with proper path construction for both files and folders
-		SELECT 
-			va.date_of_Creatation AS dateCreated,
-			ISNULL(fi.date_of_creatation, va.date_of_creatation) AS dateModified,
-			CASE 
-				WHEN va.nodeType = 1 THEN ISNULL(fp.filterPath, '')
-				ELSE ISNULL(fp.filterPath, '') + va.logFileId
-			END AS filterPath,
-			CASE 
-				WHEN va.nodeType = 1
-					AND EXISTS (
-						SELECT 1
-						FROM QMSdtlsFile_Log child WITH (NOLOCK)
-						WHERE child.ParentID = va.ID
-							AND child.active_status = 1
-							AND child.nodeType = 1
-						)
-					THEN 1
-				ELSE 0
-			END AS hasChild,
-			CAST(va.ID AS VARCHAR(50)) AS id,
-			CASE 
-				WHEN va.nodeType = 0 THEN 1
-				ELSE 0
-			END AS isFile,
-			va.logFileId AS name,
-			CAST(va.parentid AS VARCHAR(50)) AS parentId,
-			CONVERT(DECIMAL(9, 2), CEILING((ISNULL(va.size, 0) / 1024.00) * 100) / 100) AS size,
-			CASE 
-				WHEN va.nodeType = 0
-					AND CHARINDEX('.', REVERSE(va.logFileId)) > 0
-					THEN RIGHT(va.logFileId, CHARINDEX('.', REVERSE(va.logFileId)) - 1)
-				ELSE 'Folder'
-			END AS type,
-			CASE 
-				WHEN va.nodeType = 1 THEN ISNULL(fp.FullPath, '')
-				ELSE ISNULL(fp.FullPath, '') + va.logFileId
-			END AS fullPath,
-			CASE 
-				WHEN va.nodeType = 1 THEN NULL
-				ELSE va.version
-			END AS fileVersion
-		FROM QMSdtlsFile_Log va WITH (NOLOCK)
-		LEFT JOIN #FolderPaths fp ON 
-			CASE 
-				WHEN va.nodeType = 1 THEN va.ID
-				ELSE va.ParentID
-			END = fp.ID
-		LEFT JOIN QMS_FileVersionInfo fi WITH (NOLOCK) 
-			ON va.ID = fi.FileId
-			AND va.version = fi.Version
-			AND va.nodeType = 0
-		WHERE va.active_status = 1
-			AND (
-				(va.nodeType = 1 AND EXISTS (SELECT 1 FROM #AccessibleFolders af WHERE af.FolderID = va.ID))
-				OR (va.nodeType = 0 AND EXISTS (SELECT 1 FROM #AccessibleFolders af WHERE af.FolderID = va.ParentID))
-			)
-		ORDER BY va.logfileID
-		OPTION (MAXRECURSION 200, OPTIMIZE FOR UNKNOWN);
-
-		-- Cleanup temporary tables
-		DROP TABLE #AccessibleFolders;
-		DROP TABLE #NeededFolders;
-		DROP TABLE #FolderPaths;
-
-	END TRY
-	BEGIN CATCH
-		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
-		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
-		DECLARE @ErrorState INT = ERROR_STATE();
-
-		-- Cleanup temporary tables in case of error
-		IF OBJECT_ID('tempdb..#AccessibleFolders') IS NOT NULL
-			DROP TABLE #AccessibleFolders;
-		IF OBJECT_ID('tempdb..#NeededFolders') IS NOT NULL
-			DROP TABLE #NeededFolders;
-		IF OBJECT_ID('tempdb..#FolderPaths') IS NOT NULL
-			DROP TABLE #FolderPaths;
-
-		EXEC inf_log_write 'qms', 'QMS', 'SP_Get_QMS_Document_Tree', 1, 'SP_Get_QMS_Document_Tree', @ErrorMessage;
-		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
-	END CATCH;
+		RAISERROR (@ErrorMessage,@ErrorSeverity,@ErrorState);
+    END CATCH;
 END;
+`);
+            await MigrationUtilsService.migrationLog(className, '', 'S', 'jms', 'JMS_Get_Safety_Observation_Process');
+
+    } catch (error) {
+      await MigrationUtilsService.migrationLog(className, error, 'E', 'jms', 'JMS_Get_Safety_Observation_Process', true);
+    }
+  }
+  public async down(queryRunner: QueryRunner): Promise<void> {}
+}
