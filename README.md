@@ -42,7 +42,6 @@ def repair_docx_with_word(path):
         doc.Close(SaveChanges=True)
         return True
     except Exception:
-        # Silent error handling
         return False
     finally:
         app.Quit()
@@ -59,7 +58,6 @@ def validate_docx_with_word(path):
         doc.Close(SaveChanges=False)
         return True
     except Exception:
-        # Silent error handling
         return False
     finally:
         app.Quit()
@@ -96,7 +94,6 @@ def create_fallback_plain_header(original_docx_path, header_text):
         body.insert(0, p)
     tree.write(doc_xml, xml_declaration=True, encoding="UTF-8", method="xml")
     base_name = os.path.splitext(os.path.basename(original_docx_path))[0]
-    # CHANGED: ensure proper fallback filename with extension
     fallback_path = os.path.join(os.path.dirname(original_docx_path), base_name + ".docx")
     with zipfile.ZipFile(fallback_path, 'w') as outzip:
         for folder, _, files in os.walk(temp_dir_fb):
@@ -119,7 +116,6 @@ def save_as_web_archive(input_path, original_ext, fallback_path=None):
             doc = word.Documents.Open(input_path, OpenAndRepair=True, ConfirmConversions=False, AddToRecentFiles=False)
         except Exception:
             if fallback_path and fallback_path != input_path:
-                # Silent retry with fallback
                 doc = word.Documents.Open(fallback_path, OpenAndRepair=True, ConfirmConversions=False, AddToRecentFiles=False)
                 out_path = os.path.splitext(fallback_path)[0] + out_ext
             else:
@@ -213,7 +209,6 @@ def extract_header_to_body(docx_path, output_docx_path=None):
             lg = el.tag.lower()
             if any(lg.endswith(suffix) for suffix in img_tags_end):
                 return True
-            # v:shape or w:pict containing image reference attributes
             for attr_v in ("{urn:schemas-microsoft-com:vml}imagedata",
                            "id", "r:embed", "r:link", "src", "data"):
                 for attr_k, attr_val in el.attrib.items():
@@ -287,7 +282,7 @@ def extract_header_to_body(docx_path, output_docx_path=None):
         part_root = part_tree.getroot()
         part_rels_path = os.path.join(word_dir, "_rels", part_filename + ".rels")
         id_map = {}
-        image_rel_count = 0  # NEW: count image rels pulled in
+        image_rel_count = 0
         if os.path.exists(part_rels_path):
             part_rels_tree = ET.parse(part_rels_path)
             part_rels_root = part_rels_tree.getroot()
@@ -303,7 +298,6 @@ def extract_header_to_body(docx_path, output_docx_path=None):
                     rels_root.append(clone)
                     rel_signature[sig] = new_id
                     id_map[old_id] = new_id
-                # Count image relationships specifically
                 rtype = rel.get("Type") or ""
                 if rtype.endswith("/image"):
                     image_rel_count += 1
@@ -318,7 +312,6 @@ def extract_header_to_body(docx_path, output_docx_path=None):
                         if attr_val in id_map:
                             el.set(attr_name, id_map[attr_val])
         if image_rel_count:
-            # Remove print statement
             pass
         return moved_children
 
@@ -328,13 +321,12 @@ def extract_header_to_body(docx_path, output_docx_path=None):
         if blocks:
             header_blocks.extend(blocks)
 
-    # --- NEW (REPLACED): inject square logo + header text side-by-side if no image ---
+    # Inject logo + header text side-by-side if no image
     if not selected_header_has_image:
         logo_source_path = r"C:\Users\MuhammadTariqPKDev\Downloads\Teekay TOC Word Files\1\Input\logo.png"
         if os.path.isfile(logo_source_path):
             media_dir = os.path.join(word_dir, "media")
             os.makedirs(media_dir, exist_ok=True)
-            # Force name TK-LOGO-GREY.png (add suffix if collision)
             base_name_img = "TK-LOGO-GREY"
             ext_img = ".png"
             i_cnt = 0
@@ -367,14 +359,12 @@ def extract_header_to_body(docx_path, output_docx_path=None):
             ET.register_namespace('a', a_ns)
             ET.register_namespace('pic', pic_ns)
 
-            # 50px -> EMUs (50 * 9525 = 476250)
             EMU_50 = "476250"
 
             w_tbl = ET.Element(f"{{{w_ns}}}tbl")
             tblPr = ET.SubElement(w_tbl, f"{{{w_ns}}}tblPr")
             ET.SubElement(tblPr, f"{{{w_ns}}}tblW", type="dxa", w="10000")
             tblGrid = ET.SubElement(w_tbl, f"{{{w_ns}}}tblGrid")
-            # Logo column ~1500 twips, text column remainder
             ET.SubElement(tblGrid, f"{{{w_ns}}}gridCol", w="1500")
             ET.SubElement(tblGrid, f"{{{w_ns}}}gridCol", w="8500")
             tr = ET.SubElement(w_tbl, f"{{{w_ns}}}tr")
@@ -388,7 +378,6 @@ def extract_header_to_body(docx_path, output_docx_path=None):
             drawing_el = ET.SubElement(r_img, f"{{{w_ns}}}drawing")
             inline_el = ET.SubElement(drawing_el, f"{{{wp_ns}}}inline")
             ET.SubElement(inline_el, f"{{{wp_ns}}}extent", cx=EMU_50, cy=EMU_50)
-            # Alt text name & descr
             ET.SubElement(inline_el, f"{{{wp_ns}}}docPr", id="1", name="TK-LOGO-GREY", descr="TK-LOGO-GREY")
             ET.SubElement(inline_el, f"{{{wp_ns}}}cNvGraphicFramePr")
             graphic_el = ET.SubElement(inline_el, f"{{{a_ns}}}graphic")
@@ -421,9 +410,7 @@ def extract_header_to_body(docx_path, output_docx_path=None):
 
             header_blocks = [w_tbl]
             selected_header_has_image = True
-        else:
-            print("Logo file not found; header image injection skipped.")
-    # --- end NEW ---
+
     footer_files = sorted(f for f in os.listdir(word_dir) if f.startswith("footer") and f.endswith(".xml"))
     selected_footer = None
     selected_footer_text = ""
@@ -442,10 +429,13 @@ def extract_header_to_body(docx_path, output_docx_path=None):
 
     if footer_blocks:
         # Improved pagination detection
-        page_word_re = re.compile(r'^page$', re.IGNORECASE)
-        of_word_re = re.compile(r'^of$', re.IGNORECASE)
-        digits_re = re.compile(r'^\d+$')
-        full_pagination_re = re.compile(r'\bpage\b[^0-9a-zA-Z]{0,10}\d+[^0-9a-zA-Z]{0,10}\bof\b[^0-9a-zA-Z]{0,10}\d+', re.IGNORECASE)
+        page_word_re = re.compile(r'^\s*page\s*$', re.IGNORECASE)
+        of_word_re = re.compile(r'^\s*of\s*$', re.IGNORECASE)
+        digits_re = re.compile(r'^\s*\d+\s*$')
+        full_pagination_re = re.compile(
+            r'\bpage\s+\d+\s+of\s+\d+\b|\bpage\s+\d+\b|\b\d+\s+of\s+\d+\b', 
+            re.IGNORECASE
+        )
 
         def paragraph_text(p):
             return " ".join(
@@ -466,23 +456,45 @@ def extract_header_to_body(docx_path, output_docx_path=None):
             return False
 
         def cleanse_footer_block(block):
+            # More comprehensive pagination removal
+            page_patterns = [
+                re.compile(r'\bpage\s+\d+\s+of\s+\d+\b', re.IGNORECASE),
+                re.compile(r'\bpage\s+\d+\b', re.IGNORECASE),
+                re.compile(r'\b\d+\s+of\s+\d+\b', re.IGNORECASE),
+                re.compile(r'\bpage\s*$', re.IGNORECASE),
+                re.compile(r'^\s*page\s*$', re.IGNORECASE),
+            ]
+            
             # Iterate all paragraphs inside footer block (including inside tables)
             for p in list(block.iter(f"{{{w_ns}}}p")):
                 txt_full = paragraph_text(p)
-                if txt_full and full_pagination_re.search(txt_full):
-                    # Nuke entire paragraph content
-                    p.clear()
+                
+                # Check if this paragraph contains any pagination pattern
+                has_pagination = any(pattern.search(txt_full) for pattern in page_patterns)
+                
+                if has_pagination:
+                    # Remove the entire paragraph
+                    parent = p.getparent()
+                    if parent is not None:
+                        parent.remove(p)
                     continue
+                    
+                # Also check individual runs for pagination elements
                 for r in list(p.findall(f"{{{w_ns}}}r")):
+                    # Remove field codes (PAGE, NUMPAGES fields)
                     if run_has_page_field(r):
                         p.remove(r)
                         continue
+                        
+                    # Remove runs containing just page/of/digits
                     t_el = r.find(f"{{{w_ns}}}t")
                     if t_el is not None and t_el.text:
-                        token = t_el.text.strip()
-                        if page_word_re.match(token) or of_word_re.match(token) or digits_re.match(token):
+                        token = t_el.text.strip().lower()
+                        if (token in ['page', 'of'] or 
+                            token.isdigit() or 
+                            any(pattern.search(token) for pattern in page_patterns)):
                             p.remove(r)
-                # If after removal paragraph has no runs, leave as empty (acts like removed)
+
         for b in footer_blocks:
             cleanse_footer_block(b)
 
@@ -526,12 +538,10 @@ def extract_header_to_body(docx_path, output_docx_path=None):
 
     rels_tree.write(rels_path, xml_declaration=True, encoding="UTF-8", method="xml")
     document_tree.write(document_path, xml_declaration=True, encoding='UTF-8', method='xml')
-    # When creating default output path ensure .docx suffix
     if output_docx_path is None:
         base_name = os.path.splitext(os.path.basename(docx_path))[0]
         output_docx_path = os.path.join(os.path.dirname(docx_path), f"{base_name}_with_header_footer_in_body.docx")
     else:
-        # CHANGED: append .docx if missing
         if not output_docx_path.lower().endswith(".docx"):
             output_docx_path += ".docx"
     os.makedirs(os.path.dirname(output_docx_path), exist_ok=True)
@@ -573,9 +583,7 @@ def process_all(input_root, output_root):
             rel_path = os.path.relpath(src_path, input_root)
             rel_dir = os.path.dirname(rel_path)
             ext = os.path.splitext(f)[1].lower()
-            # OUTPUT: which file
             print(f"Processing file {file_count}: {rel_path}")
-            # Check if filename starts with "FM" to skip MHT/MHTML conversion
             filename_base = os.path.splitext(os.path.basename(f))[0]
             skip_web_conversion = filename_base.upper().startswith("FM")
             
@@ -593,7 +601,6 @@ def process_all(input_root, output_root):
                     except Exception:
                         valid = False
                 
-                # Skip web conversion for FM files
                 if not skip_web_conversion and final_docx_path:
                     web_temp = save_as_web_archive(final_docx_path, ext, fallback_path=src_path)
                     if web_temp:
@@ -610,7 +617,6 @@ def process_all(input_root, output_root):
                     elif not skip_web_conversion:
                         issues.append(f"Failed to create web archive for {rel_path}")
                 
-                # RESULT MESSAGE
                 if valid and not used_fallback:
                     print(f"  Success: {rel_path}")
                 elif used_fallback and valid:
