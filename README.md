@@ -1,226 +1,91 @@
-import zipfile
 import os
-import shutil
-import xml.etree.ElementTree as ET
-import copy
-import re
-import time
-import datetime
-import concurrent.futures
-import threading
-from functools import partial
+import win32com.client
+import pythoncom
+from tqdm import tqdm
 
-try:
-    import win32com.client as win32
-except ImportError:
-    win32 = None
+VERBOSE = True
 
-# Precompiled regex
-PAGE_PATTERN_RE = re.compile(r'^\s*\d+\s*/\s*\d+\s*$')
-PAGE_OF_PATTERN_RE = re.compile(r'\bPage\s+\d+\s+of\s+\d+\b', re.IGNORECASE)
-PAGE_WORD_PATTERN_RE = re.compile(r'\bpage\b', re.IGNORECASE)
-DIGIT_OF_DIGIT_RE = re.compile(r'^\s*\d+\s+of\s+\d+\s*$', re.IGNORECASE)
+def validate_converted(mhtml_path):
+    """Return (ok, reason)."""
+    if not os.path.exists(mhtml_path):
+        return False, "output file missing"
+    size = os.path.getsize(mhtml_path)
+    if size == 0:
+        return False, "output file size 0"
+    return True, f"ok size={size}"
 
-# Supported extensions set
-_SUPPORTED_DOC_EXT = {'.doc', '.docx', '.docm'}
-
-PER_FILE_TIMEOUT = 180
-MAX_WORKERS = 4  # Reduced for stability with Word COM
-
-# Thread-local storage for Word applications
-thread_local = threading.local()
-
-def get_word_app():
-    """Get or create Word application instance for current thread"""
-    if not hasattr(thread_local, 'word_app'):
-        if win32 is None:
-            thread_local.word_app = None
-        else:
-            try:
-                app = win32.DispatchEx("Word.Application")
-                configure_word(app)
-                thread_local.word_app = app
-            except Exception:
-                thread_local.word_app = None
-    return thread_local.word_app
-
-def cleanup_thread_word_app():
-    """Clean up Word application for current thread"""
-    if hasattr(thread_local, 'word_app') and thread_local.word_app:
+def convert_doc_to_mhtml(doc_path, mhtml_path):
+    """Convert a single DOC/DOCX file to MHTML format using Word's SaveAs function"""
+    pythoncom.CoInitialize()
+    try:
+        word = win32com.client.Dispatch("Word.Application")
+        word.Visible = False
         try:
-            thread_local.word_app.Quit()
-        except Exception:
-            pass
-        thread_local.word_app = None
-
-def configure_word(app):
-    try:
-        app.Visible = False
-        app.DisplayAlerts = 0
-        o = app.Options
-        o.SaveNormalPrompt = False
-        o.ConfirmConversions = False
-        o.WarnBeforeSavingPrintingSendingMarkup = False
-        try:
-            app.AutomationSecurity = 3
-        except Exception:
-            pass
-        try:
-            app.NormalTemplate.Saved = True
-        except Exception:
-            pass
-    except Exception:
-        pass
-
-def repair_docx_with_word(path):
-    app = get_word_app()
-    if app is None:
-        return False
-    try:
-        doc = app.Documents.Open(path, ReadOnly=False, OpenAndRepair=True, ConfirmConversions=False, AddToRecentFiles=False)
-        doc.Saved = True
-        doc.Close(SaveChanges=True)
+            doc = word.Documents.Open(doc_path)
+        except Exception as open_err:
+            print(f"[FAIL] Cannot open: {doc_path} :: {open_err}")
+            return False
+        # Save as MHTML format (Word's format code for MHTML is 9)
+        doc.SaveAs(mhtml_path, FileFormat=9)
+        doc.Close()
+        ok, reason = validate_converted(mhtml_path)
+        if not ok:
+            print(f"[VALIDATION] {doc_path} -> {mhtml_path}: {reason}")
+            return False
+        if VERBOSE:
+            print(f"[CONVERTED] {doc_path} -> {mhtml_path} ({reason})")
         return True
-    except Exception:
-        return False
-
-def validate_docx_with_word(path):
-    app = get_word_app()
-    if app is None:
-        return True
-    try:
-        doc = app.Documents.Open(path, ReadOnly=True, OpenAndRepair=True, ConfirmConversions=False, AddToRecentFiles=False)
-        doc.Saved = True
-        doc.Close(SaveChanges=False)
-        return True
-    except Exception:
-        return False
-
-def process_single_file(file_info, output_root, skip_web_conversion=False):
-    """Process a single file - this function runs in worker threads"""
-    full_path, rel_path, ext = file_info
-    
-    try:
-        print(f"Processing: {rel_path}")
-        start_time = time.time()
-        
-        # Your existing processing logic here
-        result = extract_header_to_body(full_path)
-        
-        if result[0] is None:
-            print(f"Failed to process: {rel_path}")
-            return False, rel_path, "Extraction failed"
-        
-        # Continue with your existing processing logic...
-        processing_time = time.time() - start_time
-        print(f"Completed: {rel_path} in {processing_time:.2f}s")
-        return True, rel_path, f"Success in {processing_time:.2f}s"
-        
     except Exception as e:
-        return False, rel_path, f"Error: {str(e)}"
+        print(f"[ERROR] Converting {doc_path}: {e}")
+        return False
+    finally:
+        word.Quit()
+        pythoncom.CoUninitialize()
 
-def main_processing_function(input_root, output_root, skip_web_conversion=False):
-    """Main function that uses multithreading"""
+def find_and_convert_docs(root_folder):
+    """Find all DOC/DOCX files in root folder and convert them to MHTML"""
+    # Supported extensions
+    extensions = ('.doc', '.docx')
     
-    # Collect all files first
-    print("Collecting files...")
-    files = collect_doc_files(input_root)
-    total_files = len(files)
-    print(f"Found {total_files} files to process")
+    # Count total files for progress bar
+    total_files = 0
+    for root, _, files in os.walk(root_folder):
+        for file in files:
+            if file.lower().endswith(extensions):
+                total_files += 1
     
     if total_files == 0:
-        print("No files to process")
+        print("No DOC/DOCX files found in the specified folder and its subfolders.")
         return
     
-    # Create output directory
-    os.makedirs(output_root, exist_ok=True)
-    
-    # Process files with multithreading
-    successful = 0
-    failed = 0
-    failed_files = []
-    
-    # Use ThreadPoolExecutor with proper resource management
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=MAX_WORKERS,
-        thread_name_prefix="DocProcessor"
-    ) as executor:
-        # Create partial function with fixed parameters
-        process_func = partial(
-            process_single_file,
-            output_root=output_root,
-            skip_web_conversion=skip_web_conversion
-        )
-        
-        # Submit all tasks
-        future_to_file = {
-            executor.submit(process_func, file_info): file_info 
-            for file_info in files
-        }
-        
-        # Process completed tasks
-        for future in concurrent.futures.as_completed(future_to_file):
-            file_info = future_to_file[future]
-            full_path, rel_path, ext = file_info
-            
-            try:
-                success, filename, message = future.result(timeout=PER_FILE_TIMEOUT)
-                if success:
-                    successful += 1
-                    print(f"✓ {message}")
-                else:
-                    failed += 1
-                    failed_files.append((filename, message))
-                    print(f"✗ {filename}: {message}")
+    # Process files with progress bar
+    with tqdm(total=total_files, desc="Converting files", unit="file") as pbar:
+        for root, _, files in os.walk(root_folder):
+            for file in files:
+                if file.lower().endswith(extensions):
+                    doc_path = os.path.join(root, file)
+                    mhtml_path = os.path.splitext(doc_path)[0] + '.mht'
                     
-            except concurrent.futures.TimeoutError:
-                failed += 1
-                failed_files.append((rel_path, "Timeout"))
-                print(f"✗ {rel_path}: Timeout after {PER_FILE_TIMEOUT}s")
-                
-            except Exception as e:
-                failed += 1
-                failed_files.append((rel_path, str(e)))
-                print(f"✗ {rel_path}: {str(e)}")
-            
-            # Progress update
-            processed = successful + failed
-            print(f"Progress: {processed}/{total_files} ({processed/total_files*100:.1f}%)")
+                    # Skip if MHTML already exists
+                    if os.path.exists(mhtml_path):
+                        pbar.update(1)
+                        continue
+                    
+                    # Convert the file
+                    convert_doc_to_mhtml(doc_path, mhtml_path)
+                    pbar.update(1)
+
+def main():
+    print("DOC/DOCX to MHTML Converter")
+    print("--------------------------")
+    root_folder = input("Enter the root folder path: ").strip('"')
     
-    # Clean up thread-local Word applications
-    cleanup_thread_word_app()
+    if not os.path.isdir(root_folder):
+        print("Error: The specified path is not a valid directory.")
+        return
     
-    # Summary
-    print(f"\nProcessing complete:")
-    print(f"Successful: {successful}")
-    print(f"Failed: {failed}")
-    
-    if failed_files:
-        print("\nFailed files:")
-        for filename, reason in failed_files:
-            print(f"  {filename}: {reason}")
+    find_and_convert_docs(root_folder)
+    print("\nConversion completed!")
 
-# Your existing functions (collect_doc_files, extract_header_to_body, etc.) remain the same
-# but make sure to use get_word_app() instead of creating new Word instances
-
-def collect_doc_files(input_root):
-    """Single pass collection of files"""
-    files = []
-    root_len = len(input_root.rstrip("\\/"))
-    for root, _, fnames in os.walk(input_root):
-        for f in fnames:
-            if not is_supported_doc(f):
-                continue
-            full_path = os.path.join(root, f)
-            rel_path = full_path[root_len+1:] if full_path.startswith(input_root) else os.path.relpath(full_path, input_root)
-            ext = os.path.splitext(f)[1].lower()
-            files.append((full_path, rel_path, ext))
-    return files
-
-def is_supported_doc(filename):
-    return os.path.splitext(filename)[1].lower() in _SUPPORTED_DOC_EXT
-
-# Add this to your existing extract_header_to_body function
-# Replace direct Word instance creation with get_word_app() calls
-
-# ... rest of your existing functions (extract_header_to_body, etc.)
+if __name__ == "__main__":
+    main()
