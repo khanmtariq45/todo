@@ -14,8 +14,19 @@ def validate_converted(mhtml_path):
         return False, "output file size 0"
     return True, f"ok size={size}"
 
-def convert_doc_to_mhtml(doc_path, mhtml_path):
-    """Convert a single DOC/DOCX file to MHTML format using Word's SaveAs function"""
+def get_output_format(original_extension):
+    """Return output format based on file extension"""
+    if original_extension.lower() == '.doc':
+        return '.mhtm'
+    else:
+        return '.mhtml'
+
+def should_skip_file(filename):
+    """Check if file should be skipped based on prefix"""
+    return filename.upper().startswith('FM')
+
+def convert_doc_to_mhtml(doc_path, output_path, output_format):
+    """Convert a single DOC/DOCX file to MHTML/MHT format using Word's SaveAs function"""
     pythoncom.CoInitialize()
     try:
         word = win32com.client.Dispatch("Word.Application")
@@ -25,15 +36,18 @@ def convert_doc_to_mhtml(doc_path, mhtml_path):
         except Exception as open_err:
             print(f"[FAIL] Cannot open: {doc_path} :: {open_err}")
             return False
+        
         # Save as MHTML format (Word's format code for MHTML is 9)
-        doc.SaveAs(mhtml_path, FileFormat=9)
+        doc.SaveAs(output_path, FileFormat=9)
         doc.Close()
-        ok, reason = validate_converted(mhtml_path)
+        
+        ok, reason = validate_converted(output_path)
         if not ok:
-            print(f"[VALIDATION] {doc_path} -> {mhtml_path}: {reason}")
+            print(f"[VALIDATION] {doc_path} -> {output_path}: {reason}")
             return False
+        
         if VERBOSE:
-            print(f"[CONVERTED] {doc_path} -> {mhtml_path} ({reason})")
+            print(f"[CONVERTED] {doc_path} -> {output_path} ({reason})")
         return True
     except Exception as e:
         print(f"[ERROR] Converting {doc_path}: {e}")
@@ -42,50 +56,83 @@ def convert_doc_to_mhtml(doc_path, mhtml_path):
         word.Quit()
         pythoncom.CoUninitialize()
 
-def find_and_convert_docs(root_folder):
-    """Find all DOC/DOCX files in root folder and convert them to MHTML"""
+def find_and_convert_docs(input_folder, output_folder):
+    """Find all DOC/DOCX files in input folder and convert them to MHTML/MHT in output folder"""
     # Supported extensions
-    extensions = ('.doc', '.docx')
+    extensions = ('.doc', '.docx', '.docm', '.dot', '.dotx', '.dotm')
     
-    # Count total files for progress bar
+    # Count total files for progress bar (excluding FM prefixed files)
     total_files = 0
-    for root, _, files in os.walk(root_folder):
+    for root, _, files in os.walk(input_folder):
         for file in files:
-            if file.lower().endswith(extensions):
+            if file.lower().endswith(extensions) and not should_skip_file(file):
                 total_files += 1
     
     if total_files == 0:
-        print("No DOC/DOCX files found in the specified folder and its subfolders.")
+        print("No convertible DOC files found in the specified folder and its subfolders.")
         return
     
     # Process files with progress bar
     with tqdm(total=total_files, desc="Converting files", unit="file") as pbar:
-        for root, _, files in os.walk(root_folder):
+        for root, _, files in os.walk(input_folder):
             for file in files:
-                if file.lower().endswith(extensions):
+                if file.lower().endswith(extensions) and not should_skip_file(file):
                     doc_path = os.path.join(root, file)
-                    mhtml_path = os.path.splitext(doc_path)[0] + '.mht'
                     
-                    # Skip if MHTML already exists
-                    if os.path.exists(mhtml_path):
+                    # Calculate relative path and output path
+                    relative_path = os.path.relpath(doc_path, input_folder)
+                    output_file_path = os.path.join(output_folder, relative_path)
+                    
+                    # Get file extension and determine output format
+                    file_ext = os.path.splitext(file)[1]
+                    output_ext = get_output_format(file_ext)
+                    output_path = os.path.splitext(output_file_path)[0] + output_ext
+                    
+                    # Create output directory if it doesn't exist
+                    output_dir = os.path.dirname(output_path)
+                    os.makedirs(output_dir, exist_ok=True)
+                    
+                    # Skip if output already exists
+                    if os.path.exists(output_path):
                         pbar.update(1)
+                        if VERBOSE:
+                            print(f"[SKIP] Output already exists: {output_path}")
                         continue
                     
                     # Convert the file
-                    convert_doc_to_mhtml(doc_path, mhtml_path)
+                    success = convert_doc_to_mhtml(doc_path, output_path, output_ext)
                     pbar.update(1)
 
 def main():
-    print("DOC/DOCX to MHTML Converter")
-    print("--------------------------")
-    root_folder = input("Enter the root folder path: ").strip('"')
+    print("DOC to MHTML/MHT Converter with Folder Hierarchy")
+    print("-----------------------------------------------")
+    print("NOTE: Output folder will contain ONLY MHTML/MHTM files")
+    print("Files with 'FM' prefix will be completely excluded")
+    print("-" * 50)
     
-    if not os.path.isdir(root_folder):
-        print("Error: The specified path is not a valid directory.")
+    input_folder = input("Enter the input folder path: ").strip('"')
+    output_folder = input("Enter the output folder path: ").strip('"')
+    
+    if not os.path.isdir(input_folder):
+        print("Error: The specified input path is not a valid directory.")
         return
     
-    find_and_convert_docs(root_folder)
+    # Create output folder if it doesn't exist
+    os.makedirs(output_folder, exist_ok=True)
+    
+    print(f"\nInput folder: {input_folder}")
+    print(f"Output folder: {output_folder}")
+    print("Skipping files with 'FM' prefix")
+    print("Converting .doc files to .mhtm and other DOC formats to .mhtml")
+    print("Output folder will contain ONLY MHTML/MHTM files")
+    print("-" * 50)
+    
+    # Convert only the DOC files (excluding FM-prefixed)
+    find_and_convert_docs(input_folder, output_folder)
+    
     print("\nConversion completed!")
+    print(f"Only MHTML/MHTM files created in: {output_folder}")
+    print("All other files (including FM-prefixed) were excluded from output")
 
 if __name__ == "__main__":
     main()
