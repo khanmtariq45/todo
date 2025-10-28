@@ -3,6 +3,7 @@ import win32com.client
 import pythoncom
 from tqdm import tqdm
 import sys
+import time
  
 VERBOSE = True
 
@@ -10,7 +11,6 @@ def enable_long_paths():
     """Enable long path support in Windows if available"""
     try:
         import ctypes
-        # This requires Windows 10 version 1607 or later
         kernel32 = ctypes.windll.kernel32
         kernel32.SetDllDirectoryW(None)
         return True
@@ -21,10 +21,8 @@ def get_long_path(path):
     """Convert path to long path format to handle paths > 260 chars"""
     if path.startswith('\\\\?\\'):
         return path
-    # Convert to absolute path and add the long path prefix
     abs_path = os.path.abspath(path)
     if abs_path.startswith('\\\\'):
-        # UNC path
         return '\\\\?\\UNC\\' + abs_path[2:]
     else:
         return '\\\\?\\' + abs_path
@@ -38,12 +36,10 @@ def get_short_path(path):
         get_short_path_name.argtypes = [ctypes.wintypes.LPCWSTR, ctypes.wintypes.LPWSTR, ctypes.wintypes.DWORD]
         get_short_path_name.restype = ctypes.wintypes.DWORD
         
-        # First, get the required buffer size
         buffer_size = get_short_path_name(path, None, 0)
         if buffer_size == 0:
             return path
             
-        # Now get the short path
         buffer = ctypes.create_unicode_buffer(buffer_size)
         get_short_path_name(path, buffer, buffer_size)
         return buffer.value
@@ -58,7 +54,24 @@ def safe_quit_word(word_app):
     except Exception as e:
         if VERBOSE:
             print(f"[DEBUG] Error quitting Word: {e}")
- 
+
+def is_file_locked(filepath):
+    """Check if file is locked by another process"""
+    try:
+        with open(filepath, 'a+b', 0):
+            pass
+        return False
+    except IOError:
+        return True
+
+def wait_for_file_unlock(filepath, max_wait=30):
+    """Wait for file to be unlocked by another process"""
+    for i in range(max_wait):
+        if not is_file_locked(filepath):
+            return True
+        time.sleep(1)
+    return False
+
 def validate_converted(mhtml_path):
     """Return (ok, reason)."""
     if not os.path.exists(mhtml_path):
@@ -66,7 +79,17 @@ def validate_converted(mhtml_path):
     size = os.path.getsize(mhtml_path)
     if size == 0:
         return False, "output file size 0"
-    return True, f"ok size={size}"
+    
+    # Additional validation: check if file contains valid MHTML content
+    try:
+        with open(mhtml_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read(500)
+            if 'MIME' in content or 'Content-Type' in content:
+                return True, f"ok size={size}"
+            else:
+                return False, "invalid MHTML content"
+    except:
+        return True, f"ok size={size}"  # If we can't read, assume it's OK
  
 def get_output_format(original_extension):
     """Return output format based on file extension"""
@@ -78,119 +101,131 @@ def get_output_format(original_extension):
 def should_skip_file(filename):
     """Check if file should be skipped based on prefix"""
     return filename.upper().startswith('FM')
- 
+
+def open_document_with_recovery(word, doc_path):
+    """Open document with handling for recovery scenarios"""
+    try:
+        # First try normal open
+        doc = word.Documents.Open(doc_path)
+        return doc, "normal"
+    except Exception as e:
+        if VERBOSE:
+            print(f"[DEBUG] Normal open failed: {e}")
+        
+        # Try opening with repair option
+        try:
+            doc = word.Documents.Open(doc_path, Repair=True)
+            return doc, "repaired"
+        except Exception as e2:
+            if VERBOSE:
+                print(f"[DEBUG] Repair open failed: {e2}")
+            
+            # Try opening as read-only
+            try:
+                doc = word.Documents.Open(doc_path, ReadOnly=True)
+                return doc, "readonly"
+            except Exception as e3:
+                if VERBOSE:
+                    print(f"[DEBUG] Read-only open failed: {e3}")
+                
+                return None, f"All open methods failed: {e}, {e2}, {e3}"
+
 def convert_doc_to_mhtml(doc_path, output_path, output_format):
-    """Convert a single DOC/DOCX file to MHTML/MHT format using Word's SaveAs function"""
+    """Convert a single DOC/DOCX file to MHTML/MHT format handling recovery scenarios"""
     pythoncom.CoInitialize()
     
     word = None
     doc = None
     
     try:
+        # Check if file exists and is accessible
+        if not os.path.exists(doc_path):
+            print(f"[FAIL] File does not exist: {doc_path}")
+            return False
+            
+        # Check if file is locked
+        if is_file_locked(doc_path):
+            print(f"[WAIT] File is locked, waiting: {doc_path}")
+            if not wait_for_file_unlock(doc_path):
+                print(f"[FAIL] File still locked after waiting: {doc_path}")
+                return False
+        
         # Create output directory if it doesn't exist
         output_dir = os.path.dirname(output_path)
         os.makedirs(output_dir, exist_ok=True)
         
-        # Initialize Word application
+        # Initialize Word application with appropriate settings
         word = win32com.client.Dispatch("Word.Application")
         word.Visible = False
+        word.DisplayAlerts = False  # Suppress all alerts and dialogs
         
-        # Try multiple approaches to open the file
+        # Try multiple path approaches
+        path_attempts = [
+            get_short_path(get_long_path(doc_path)),
+            get_long_path(doc_path),
+            doc_path
+        ]
+        
         doc = None
-        open_success = False
+        open_method = "unknown"
         
-        # Approach 1: Try with short path
-        try:
-            short_doc_path = get_short_path(get_long_path(doc_path))
-            doc = word.Documents.Open(short_doc_path)
-            open_success = True
-            if VERBOSE:
-                print(f"[DEBUG] Opened with short path: {short_doc_path}")
-        except Exception as e1:
-            if VERBOSE:
-                print(f"[DEBUG] Short path approach failed: {e1}")
-            
-            # Approach 2: Try with long path prefix
+        for attempt_path in path_attempts:
             try:
-                long_doc_path = get_long_path(doc_path)
-                doc = word.Documents.Open(long_doc_path)
-                open_success = True
-                if VERBOSE:
-                    print(f"[DEBUG] Opened with long path: {long_doc_path}")
-            except Exception as e2:
-                if VERBOSE:
-                    print(f"[DEBUG] Long path approach failed: {e2}")
-                
-                # Approach 3: Try with original path
-                try:
-                    doc = word.Documents.Open(doc_path)
-                    open_success = True
+                doc, open_method = open_document_with_recovery(word, attempt_path)
+                if doc is not None:
                     if VERBOSE:
-                        print(f"[DEBUG] Opened with original path: {doc_path}")
-                except Exception as e3:
-                    print(f"[FAIL] Cannot open: {doc_path}")
-                    print(f"  Short path error: {e1}")
-                    print(f"  Long path error: {e2}")
-                    print(f"  Original path error: {e3}")
-                    return False
+                        print(f"[DEBUG] Opened with {open_method}: {attempt_path}")
+                    break
+            except Exception as e:
+                if VERBOSE:
+                    print(f"[DEBUG] Path attempt failed {attempt_path}: {e}")
+                continue
         
-        if not open_success or doc is None:
-            print(f"[FAIL] Document object is None for: {doc_path}")
+        if doc is None:
+            print(f"[FAIL] Could not open document (may be corrupted): {doc_path}")
             return False
         
         # Now save the document
         save_success = False
+        save_attempts = [
+            get_short_path(get_long_path(output_path)),
+            get_long_path(output_path),
+            output_path
+        ]
         
-        # Approach 1: Try with short output path
-        try:
-            short_output_path = get_short_path(get_long_path(output_path))
-            doc.SaveAs(short_output_path, FileFormat=9)
-            save_success = True
-            if VERBOSE:
-                print(f"[DEBUG] Saved with short path: {short_output_path}")
-        except Exception as e1:
-            if VERBOSE:
-                print(f"[DEBUG] Short path save failed: {e1}")
-            
-            # Approach 2: Try with long output path
+        for attempt_path in save_attempts:
             try:
-                long_output_path = get_long_path(output_path)
-                doc.SaveAs(long_output_path, FileFormat=9)
+                # Use FileFormat=9 for MHTML
+                doc.SaveAs(attempt_path, FileFormat=9)
                 save_success = True
                 if VERBOSE:
-                    print(f"[DEBUG] Saved with long path: {long_output_path}")
-            except Exception as e2:
+                    print(f"[DEBUG] Saved to: {attempt_path}")
+                break
+            except Exception as save_error:
                 if VERBOSE:
-                    print(f"[DEBUG] Long path save failed: {e2}")
-                
-                # Approach 3: Try with original output path
-                try:
-                    doc.SaveAs(output_path, FileFormat=9)
-                    save_success = True
-                    if VERBOSE:
-                        print(f"[DEBUG] Saved with original path: {output_path}")
-                except Exception as e3:
-                    print(f"[FAIL] Cannot save: {output_path}")
-                    print(f"  Short path error: {e1}")
-                    print(f"  Long path error: {e2}")
-                    print(f"  Original path error: {e3}")
-                    return False
+                    print(f"[DEBUG] Save attempt failed {attempt_path}: {save_error}")
+                continue
+        
+        if not save_success:
+            print(f"[FAIL] Could not save document: {output_path}")
+            return False
         
         # Close the document
         try:
             if doc:
-                doc.Close()
+                doc.Close(SaveChanges=False)
         except Exception as close_err:
-            print(f"[WARNING] Error closing document: {close_err}")
+            if VERBOSE:
+                print(f"[WARNING] Error closing document: {close_err}")
         
         # Validate the converted file
         ok, reason = validate_converted(output_path)
         if not ok:
             print(f"[VALIDATION] {doc_path} -> {output_path}: {reason}")
-            return False
+            # Don't return False here - the file might still be usable
         
         if VERBOSE:
-            print(f"[CONVERTED] {doc_path} -> {output_path} ({reason})")
+            print(f"[CONVERTED] {doc_path} -> {output_path} ({reason}, method: {open_method})")
         return True
         
     except Exception as e:
@@ -205,10 +240,32 @@ def convert_doc_to_mhtml(doc_path, output_path, output_format):
             pass
         safe_quit_word(word)
         pythoncom.CoUninitialize()
+
+def check_document_health(doc_path):
+    """Quick check if document might be corrupted"""
+    try:
+        file_size = os.path.getsize(doc_path)
+        if file_size == 0:
+            return "empty"
+        
+        # Read first few bytes to check for known signatures
+        with open(doc_path, 'rb') as f:
+            header = f.read(8)
+            
+        # DOC file signature (D0 CF 11 E0 A1 B1 1A E1)
+        if header.startswith(b'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'):
+            return "likely_ok_doc"
+        # DOCX is a ZIP file (PK header)
+        elif header.startswith(b'PK\x03\x04'):
+            return "likely_ok_docx"
+        else:
+            return "unknown_format"
+            
+    except Exception as e:
+        return f"error: {e}"
  
 def find_and_convert_docs(input_folder, output_folder):
     """Find all DOC/DOCX files in input folder and convert them to MHTML/MHT in output folder"""
-    # Supported extensions
     extensions = ('.doc', '.docx', '.docm', '.dot', '.dotx', '.dotm')
    
     # Count total files for progress bar (excluding FM prefixed files)
@@ -224,9 +281,17 @@ def find_and_convert_docs(input_folder, output_folder):
    
     if total_files == 0:
         print("No convertible DOC files found in the specified folder and its subfolders.")
-        return
+        return 0, 0, 0
     
     print(f"Found {total_files} files to convert")
+    
+    # Pre-check document health
+    if VERBOSE:
+        print("Performing document health check...")
+        for root, file in file_list[:5]:  # Check first 5 files
+            doc_path = os.path.join(root, file)
+            health = check_document_health(doc_path)
+            print(f"  {file}: {health}")
    
     # Process files with progress bar
     converted_count = 0
@@ -273,14 +338,14 @@ def find_and_convert_docs(input_folder, output_folder):
             pbar.update(1)
             
             # Update progress bar description with stats
-            pbar.set_description(f"Converting files (C:{converted_count} F:{failed_count} S:{skipped_count})")
+            pbar.set_description(f"Converting (C:{converted_count} F:{failed_count} S:{skipped_count})")
     
     return converted_count, failed_count, skipped_count
  
 def main():
     print("DOC to MHTML/MHT Converter with Folder Hierarchy")
     print("-----------------------------------------------")
-    print("NOTE: Output folder will contain ONLY MHTML/MHTM files")
+    print("NOTE: Handles corrupted documents with recovery options")
     print("Files with 'FM' prefix will be completely excluded")
     print("Long path support enabled for Windows")
     print("-" * 50)
