@@ -1,55 +1,76 @@
-public async Task<bool> Has_UserAccessRight(string ModuleCode, string FunctionCode, string Action, string Token)
+private async Task Set_HeaderIconsVisibility()
 {
-    string methodName = "BLL_Infra_UserCredentials.Has_UserAccessRight";
+    Image1.Visible = true;
+    imglogo1.Visible = true;
+    LoginView1.Visible = true;
 
-    try
+    HtmlControl divSlf = (HtmlControl)HeadLoginView.FindControl("dvslficon");
+    HtmlControl divCalender = (HtmlControl)HeadLoginView.FindControl("dvcalender");
+    HtmlControl divNotification = (HtmlControl)HeadLoginView.FindControl("dvnotification");
+    HtmlControl divCopilot = (HtmlControl)HeadLoginView.FindControl("dvcopilot");
+
+    bool showSlfIcon = false, showCalendarIcon = false, showNotificationsIcon = false, showCopilotIcon = false;
+    INFRA_Enum.settingType slfOption;
+
+    DataTable dt = await Task.Run(() => objDAL.Get_HeaderIconsVisibility());
+
+    foreach (DataRow dtRow in dt.Rows)
     {
-        UDFLib.WriteLog(methodName, string.Format("Method called with parameters - ModuleCode: '{0}', FunctionCode: '{1}', Action: '{2}', Token: '{3}'", ModuleCode, FunctionCode, Action, Token));
+        slfOption = (INFRA_Enum.settingType)Enum.Parse(typeof(INFRA_Enum.settingType), dtRow[0].ToString(), true);
 
-        if (string.IsNullOrEmpty(Token) || string.IsNullOrEmpty(ModuleCode) || string.IsNullOrEmpty(FunctionCode) || string.IsNullOrEmpty(Action))
+        switch (slfOption)
         {
-            string missingParams = string.Join(", ",
-                new string[] {
-                    string.IsNullOrEmpty(Token) ? "Token" : null,
-                    string.IsNullOrEmpty(ModuleCode) ? "ModuleCode" : null,
-                    string.IsNullOrEmpty(FunctionCode) ? "FunctionCode" : null,
-                    string.IsNullOrEmpty(Action) ? "Action" : null
-                }.Where(x => x != null).ToArray());
+            case INFRA_Enum.settingType.slf_icon_visibility:
+                showSlfIcon = dtRow[1].ToString() == "1";
+                break;
+            case INFRA_Enum.settingType.cal_icon_visibility:
+                showCalendarIcon = dtRow[1].ToString() == "1";
+                break;
+            case INFRA_Enum.settingType.notification_icon_visibility:
+                showNotificationsIcon = dtRow[1].ToString() == "1";
 
-            UDFLib.WriteLog(methodName, string.Format("Required parameter(s) missing: {0}. Access denied - returning false.", missingParams));
-            return false;
+                if (!showNotificationsIcon)
+                {
+                    AlertNotificationApiIntervalSecondsKeyValue = -1;
+                }
+                break;
+            case INFRA_Enum.settingType.copilot_icon_visibility:
+                int userId = GetSessionUserID();
+                bool hasCopliotAccess = await objUser.Has_UserAccessRight("copilot", "copilot_icon_sub", "view", Convert.ToString(Session["token"]));
+                showCopilotIcon = dtRow[1].ToString() == "1" && hasCopliotAccess;
+                break;
+            default:
+                break;
         }
+    }
 
-        List<UserAccessRight> userRights = await objDal.Get_UserAccessRightListAsync(Token);
+    divSlf.Visible = showSlfIcon;
+    divCalender.Visible = showCalendarIcon;
+    divNotification.Visible = showNotificationsIcon;
+    divCopilot.Visible = showCopilotIcon;
 
-        if (userRights == null)
+    await Set_SLF(divSlf);
+}
+
+private async Task Set_SLF(HtmlControl divSlf)
+{
+    DataTable dtSLFFilterData = await Task.Run(() => objDAL.slfFilterData(Convert.ToString(Session["User_Uid"])));
+    if (dtSLFFilterData != null && dtSLFFilterData.Rows.Count > 0)
+    {
+        SlfUserData = Convert.ToInt32((dtSLFFilterData.Rows[0]).ItemArray[0]);
+
+        HtmlControl cancel = (HtmlControl)HeadLoginView.FindControl("cross");
+        if (SlfUserData != 0)
         {
-            UDFLib.WriteLog(methodName, "API returned null user rights list! Access denied - returning false.");
-            return false;
-        }
-
-        UDFLib.WriteLog(methodName, string.Format("Successfully retrieved {0} user access rights from API.", userRights.Count));
-
-        UserAccessRight matchingRight = userRights.FirstOrDefault(right =>
-            string.Equals(right.Module_Code, ModuleCode, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(right.Function_Code, FunctionCode, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(right.Action, Action, StringComparison.OrdinalIgnoreCase)
-        );
-
-        if (matchingRight != null)
-        {
-            UDFLib.WriteLog(methodName, string.Format("Access GRANTED! Found matching access right - User_ID: {0}, Right_Code: '{1}', Valid_On: '{2}'", matchingRight.User_ID, matchingRight.Right_Code, matchingRight.Valid_On));
-            return true;
+            divSlf.Style.Add("background-color", "#FFACB5");
+            divSlf.Style.Add("border-radius", "50%");
+            cancel.Style.Add("visibility", "visible");
         }
         else
         {
-            UDFLib.WriteLog(methodName, string.Format("Access DENIED! No matching access right found for ModuleCode: '{0}', FunctionCode: '{1}', Action: '{2}'", ModuleCode, FunctionCode, Action));
-            return false;
+            divSlf.Style.Add("background-color", "none");
+            cancel.Style.Add("visibility", "hidden");
+            ScriptManager.RegisterStartupScript(Page, Page.GetType(), "text", "disableCross();", true);
         }
-    }
-    catch (Exception ex)
-    {
-        UDFLib.WriteExceptionLog(ex);
-        return false;
     }
 }
