@@ -1,426 +1,119 @@
-using System;
-using System.Web;
-using System.Web.UI;
-using System.Web.UI.WebControls;
-using System.Web.Security;
-using SMS.Business.Infrastructure;
-using SMS.Properties;
-using System.Configuration;
-using System.Web.UI.HtmlControls;
-using System.Data;
-using System.Threading.Tasks;
+I am calling function 
 
-public partial class SiteMaster : System.Web.UI.MasterPage
-{
-    UserAccess objUA = new UserAccess();
+bool hasCopliotAccess = await objUser.Has_UserAccessRight("copilot", "copilot_icon_sub", "view", Convert.ToString(Session["token"]));
 
-    BLL_Infra_UserCredentials objUser = new BLL_Infra_UserCredentials();
-    BLL_Infra_MenuManagement objDAL = new BLL_Infra_MenuManagement();
-    BLL_Infra_Common objCommonBLL = new BLL_Infra_Common();
 
-    public const string alertNotificationKeyConfigKey = "alert-notification-api-interval-seconds";
-    public const string subscriptionPaymentConfigKey = "subscription_payment_overdue";
+then there 
 
-    #region props
-    public int SubscriptionPaymentOverDueKeyValue
-    {
-        get
+ public async Task<bool> Has_UserAccessRight(string ModuleCode, string FunctionCode, string Action, string Token)
         {
-            if (!string.IsNullOrEmpty(hfSubscriptionPaymentOverDueKeyValue.Value))
+            string methodName = "BLL_Infra_UserCredentials.Has_UserAccessRight";
+
+            try
             {
-                return int.Parse(hfSubscriptionPaymentOverDueKeyValue.Value);
-            }
-            return 0;
-        }
-        set { hfSubscriptionPaymentOverDueKeyValue.Value = value.ToString(); }
-    }
-    public int AlertNotificationApiIntervalSecondsKeyValue
-    {
-        get
-        {
-            if (!string.IsNullOrEmpty(hfAlertNotificationApiIntervalSecondsKeyValue.Value))
-            {
-                return int.Parse(hfAlertNotificationApiIntervalSecondsKeyValue.Value);
-            }
+                UDFLib.WriteLog(methodName, string.Format("Method called with parameters - ModuleCode: '{0}', FunctionCode: '{1}', Action: '{2}', Token: '{3}'", ModuleCode, FunctionCode, Action, Token));
 
-            return 60;
-        }
-        set { hfAlertNotificationApiIntervalSecondsKeyValue.Value = value.ToString(); }
-    }
-
-    public int SlfUserData
-    {
-        get
-        {
-            if (!string.IsNullOrEmpty(hfSlfUserData.Value))
-            {
-                return int.Parse(hfSlfUserData.Value);
-            }
-            return 0;
-        }
-        set { hfSlfUserData.Value = value.ToString(); }
-    }
-
-    public int CompanyCount
-    {
-        get
-        {
-            if (!string.IsNullOrEmpty(hfCompanyCount.Value))
-            {
-                return int.Parse(hfCompanyCount.Value);
-            }
-            return 0;
-        }
-        set { hfCompanyCount.Value = value.ToString(); }
-    }
-
-    public string j3MasterApiUrl
-    {
-        get { return hfj3MasterApiUrl.Value; }
-        set { hfj3MasterApiUrl.Value = value; }
-    }
-    #endregion
-
-    protected void Page_Load(object sender, EventArgs e)
-    {
-        RegisterAsyncTask(new PageAsyncTask(LoadDataAsync));
-    }
-
-    private async Task LoadDataAsync()
-    {
-        try
-        {
-            Page.Header.DataBind(); //Used to resolve the javascript file references in master page <Head>.
-            Image img = new Image();
-
-            if (!IsPostBack)
-            {
-                imgReportIssue.ImageUrl = "/" + System.Configuration.ConfigurationManager.AppSettings["APP_NAME"].ToString() + "/images/close.png";
-                ImageButton1.ImageUrl = "/" + System.Configuration.ConfigurationManager.AppSettings["APP_NAME"].ToString() + "/images/Cancel.png";
-
-                j3MasterApiUrl = objCommonBLL.GetNodeApiURL("MASTER");
-
-                if (Session["User_Uid"] != null)
+                if (string.IsNullOrEmpty(Token) || string.IsNullOrEmpty(ModuleCode) || string.IsNullOrEmpty(FunctionCode) || string.IsNullOrEmpty(Action))
                 {
-                    ReadAndSetConfigurationKeys();
-                    await Set_HeaderIconsVisibility();
+                    string missingParams = string.Join(", ",
+                        new string[] {
+                            string.IsNullOrEmpty(Token) ? "Token" : null,
+                            string.IsNullOrEmpty(ModuleCode) ? "ModuleCode" : null,
+                            string.IsNullOrEmpty(FunctionCode) ? "FunctionCode" : null,
+                            string.IsNullOrEmpty(Action) ? "Action" : null
+                        }.Where(x => x != null).ToArray());
+
+                    UDFLib.WriteLog(methodName, string.Format("Required parameter(s) missing: {0}. Access denied - returning false.", missingParams));
+                    return false;
                 }
 
-                if (Session["CompanyCount"] != null)
+
+                List<UserAccessRight> userRights = objDal.Get_UserAccessRightList(Token);
+
+                if (userRights == null)
                 {
-                    CompanyCount = Convert.ToInt16(Session["CompanyCount"].ToString());
+                    UDFLib.WriteLog(methodName, "API returned null user rights list! Access denied - returning false.");
+                    return false;
+                }
+
+                UDFLib.WriteLog(methodName, string.Format("Successfully retrieved {0} user access rights from API.", userRights.Count));
+
+                UserAccessRight matchingRight = userRights.FirstOrDefault(right =>
+                    string.Equals(right.Module_Code, ModuleCode, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(right.Function_Code, FunctionCode, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(right.Action, Action, StringComparison.OrdinalIgnoreCase)
+                );
+
+                if (matchingRight != null)
+                {
+                    UDFLib.WriteLog(methodName, string.Format("Access GRANTED! Found matching access right - User_ID: {0}, Right_Code: '{1}', Valid_On: '{2}'", matchingRight.User_ID, matchingRight.Right_Code, matchingRight.Valid_On));
+                    return true;
+                }
+                else
+                {
+                    UDFLib.WriteLog(methodName, string.Format("Access DENIED! No matching access right found for ModuleCode: '{0}', FunctionCode: '{1}', Action: '{2}'", ModuleCode, FunctionCode, Action));
+                    return false;
                 }
             }
-
-            // Function to load logo during login page and  after successfull login of user.
-            LoginView loginview1 = (LoginView)(Page.Master as SiteMaster).FindControl("HeadLoginView");
-
-            if (loginview1 != null)
+            catch (Exception ex)
             {
-                img = (Image)loginview1.FindControl("Image2");
-                if (Session["File_Path"] != null)
+                UDFLib.WriteExceptionLog(ex);
+                return false;
+            }
+        }
+
+
+
+        then there is 
+
+
+        public List<UserAccessRight> Get_UserAccessRightList(string Token)
+        {
+            string methodName = "DAL_Infra_UserCredentials.Get_UserAccessRightList";
+            List<UserAccessRight> userRights = new List<UserAccessRight>();
+
+            try
+            {
+
+                string baseUrl = DAL_Infra_Common.GetNodeApiURL("infra");
+                string apiUrl = string.Concat(baseUrl, "/infra/access-rights/user-rights/get-user-access-rights");
+
+                UDFLib.WriteLog(methodName, string.Format("Complete API URL: '{0}'", apiUrl));
+
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(apiUrl);
+                request.Method = "GET";
+                request.ContentType = "application/json";
+                request.Headers.Add("Authorization", Token);
+
+                UDFLib.WriteLog(methodName, "HTTP request configured. Making API call...");
+
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
                 {
-                    if (Session["File_Path"].ToString() != "")
+                    UDFLib.WriteLog(methodName, string.Format("API call successful. Response Status: {0} ({1})", response.StatusCode, (int)response.StatusCode));
+
+                    using (StreamReader reader = new StreamReader(response.GetResponseStream()))
                     {
-                        img.ImageUrl = @"~//Images/" + Session["File_Path"].ToString();
-                    }
-                    else
-                    {
-                        if (img != null)
+                        string jsonResponse = reader.ReadToEnd();
+
+                        if (string.IsNullOrEmpty(jsonResponse))
                         {
-                            img.Visible = false;
+                            UDFLib.WriteLog(methodName, "Warning: API returned empty response!");
+                            return userRights;
                         }
+
+                        UDFLib.WriteLog(methodName, string.Format("JSON response received. Length: {0} characters", jsonResponse.Length));
+
+                        JavaScriptSerializer serializer = new JavaScriptSerializer();
+                        serializer.MaxJsonLength = Int32.MaxValue;
+                        userRights = serializer.Deserialize<List<UserAccessRight>>(jsonResponse);
                     }
                 }
-                else if (CompanyCount > 1)
-                {
-                    imglogo1.Visible = false;
-                }
-                else
-                {
-                    imglogo1.ImageUrl = "~/Images/company_logo.jpg";
-                }
             }
-            //Hide/Show menu and logo on the basis the of J1Token session variable, which will be set when J2 requests pages which belongs to J1.        
-            divHeader.Visible = true;
-            divBreadcrumb.Visible = true;
-            //for walkme
-            hdfUserDetailsForWalkme.Value = Convert.ToString(Session["UserDetailsForWalkme"]);
-            string APP_NAME = ConfigurationManager.AppSettings["APP_NAME"].ToString();
-            DynamicLink.Href = "/" + APP_NAME + "/Styles/" + Convert.ToString(Session["USERSTYLE"]);
-            string JsModalpopup = "/" + APP_NAME + "/Scripts/ReportIssuePopup.js";
-            Literal scriptModalpopup = new Literal();
-            scriptModalpopup.Text = string.Format(@"<script src=""{0}"" type=""text/javascript""></script>", JsModalpopup);
-            Page.Header.Controls.Add(scriptModalpopup);
-            var scriptManager = ScriptManager.GetCurrent(Page);
-            if (scriptManager == null) return;
-            scriptManager.Scripts.Add(new ScriptReference { Path = "~/Scripts/html2canvas.js" });
-            var scriptManager1 = ScriptManager.GetCurrent(Page);
-            if (scriptManager1 == null) return;
-            scriptManager1.Scripts.Add(new ScriptReference { Path = "~/Scripts/HelpFile.js" });
-            //for walkme
-            string walkmescript = string.Format("GetValueForWalkMe();");
-            ScriptManager.RegisterStartupScript(Page, Page.GetType(), "walkmescript", walkmescript, true);
-            hdfuserDefaultTheme.Value = Convert.ToString(Session["USERSTYLE"]);
-            UserAccessValidation();
-            AssignSPMModuleID();
-            //Added a check for Supplier and Travel Agent to hide the Change password link in header.
-            HyperLink link = HeadLoginView.FindControl("HyperLink1") as HyperLink;
-            if (HeadLoginView.FindControl("HyperLink1") != null && Session["UTYPE"] != null)
+            catch (Exception ex)
             {
-                if (Session["UTYPE"].ToString().Trim().ToUpper() == "SUPPLIER".ToUpper())
-                    link.Visible = false;
-                else if (Session["UTYPE"].ToString().Trim().ToUpper() == "TRAVEL AGENT".ToUpper())
-                    link.Visible = false;
-                else
-                    link.Visible = true;
+                UDFLib.WriteExceptionLog(ex);
+                throw new Exception("Error retrieving user access rights: " + ex.Message, ex);
             }
-            if (Session["USERID"] != null)      //Make JiBe logo to be a link to the main dashboard
-            {
-                hlinkDashboard.NavigateUrl = UDFLib.GetDefaultHomePage();
-                if (HeadLoginView.FindControl("imgDownArrow") != null)
-                {
-                    Label lbl = HeadLoginView.FindControl("imgDownArrow") as Label;
-                    lbl.Visible = true;
-                }
-            }
-            if (Session["User_DateFormat"] != null)
-            {
-                hdnDateFromatMasterPage.Value = Session["User_DateFormat"].ToString();
-            }
+
+            return userRights;
         }
-        catch (Exception ex)
-        {
-            UDFLib.WriteExceptionLog(ex);
-        }
-    }
-
-    private int GetSessionUserID()
-    {
-        if (Session["USERID"] != null)
-            return int.Parse(Session["USERID"].ToString());
-        else
-            return 0;
-    }
-
-    private async Task Set_HeaderIconsVisibility()
-    {
-        Image1.Visible = true;
-        imglogo1.Visible = true;
-        LoginView1.Visible = true;
-
-        HtmlControl divSlf = (HtmlControl)HeadLoginView.FindControl("dvslficon");
-        HtmlControl divCalender = (HtmlControl)HeadLoginView.FindControl("dvcalender");
-        HtmlControl divNotification = (HtmlControl)HeadLoginView.FindControl("dvnotification");
-        HtmlControl divCopilot = (HtmlControl)HeadLoginView.FindControl("dvcopilot");
-
-        bool showSlfIcon = false, showCalendarIcon = false, showNotificationsIcon = false, showCopilotIcon = false;
-        INFRA_Enum.settingType slfOption;
-
-        DataTable dt = await Task.Run(() => objDAL.Get_HeaderIconsVisibility());
-
-        foreach (DataRow dtRow in dt.Rows)
-        {
-            slfOption = (INFRA_Enum.settingType)Enum.Parse(typeof(INFRA_Enum.settingType), dtRow[0].ToString(), true);
-
-            switch (slfOption)
-            {
-                case INFRA_Enum.settingType.slf_icon_visibility:
-                    showSlfIcon = dtRow[1].ToString() == "1";
-                    break;
-                case INFRA_Enum.settingType.cal_icon_visibility:
-                    showCalendarIcon = dtRow[1].ToString() == "1";
-                    break;
-                case INFRA_Enum.settingType.notification_icon_visibility:
-                    showNotificationsIcon = dtRow[1].ToString() == "1";
-
-                    if (!showNotificationsIcon)
-                    {
-                        AlertNotificationApiIntervalSecondsKeyValue = -1;
-                    }
-                    break;
-
-                case INFRA_Enum.settingType.copilot_icon_visibility:
-                    int userId = GetSessionUserID();
-                    bool hasCopliotAccess = await Task.Run(() => objUser.Has_UserAccessRight("copilot", "copilot_icon_sub", "view", Convert.ToString(Session["token"])));
-                    showCopilotIcon = dtRow[1].ToString() == "1" && hasCopliotAccess;
-                    break;
-                default:
-                    break;
-            }
-        }
-
-        divSlf.Visible = showSlfIcon;
-        divCalender.Visible = showCalendarIcon;
-        divNotification.Visible = showNotificationsIcon;
-        divCopilot.Visible = showCopilotIcon;
-
-        await Set_SLF(divSlf);
-    }
-
-    private async Task Set_SLF(HtmlControl divSlf)
-    {
-        DataTable dtSLFFilterData = await Task.Run(() => objDAL.slfFilterData(Convert.ToString(Session["User_Uid"])));
-        if (dtSLFFilterData != null && dtSLFFilterData.Rows.Count > 0)
-        {
-            SlfUserData = Convert.ToInt32((dtSLFFilterData.Rows[0]).ItemArray[0]);
-
-            HtmlControl cancel = (HtmlControl)HeadLoginView.FindControl("cross");
-            if (SlfUserData != 0)
-            {
-                divSlf.Style.Add("background-color", "#FFACB5");
-                divSlf.Style.Add("border-radius", "50%");
-                cancel.Style.Add("visibility", "visible");
-            }
-            else
-            {
-                divSlf.Style.Add("background-color", "none");
-                cancel.Style.Add("visibility", "hidden");
-                ScriptManager.RegisterStartupScript(Page, Page.GetType(), "text", "disableCross();", true);
-            }
-        }
-    }
-
-    private void ReadAndSetConfigurationKeys()
-    {
-        DataTable dtAlertNotificationConfig = UDFLib.get_key_value_config(alertNotificationKeyConfigKey);
-        DataTable dtsubscriptionPaymentConfig = UDFLib.get_key_value_config(subscriptionPaymentConfigKey);
-
-        AlertNotificationApiIntervalSecondsKeyValue = dtAlertNotificationConfig != null && dtAlertNotificationConfig.Rows.Count > 0 ?
-            int.Parse(dtAlertNotificationConfig.Rows[0][1].ToString()) : 60;
-        SubscriptionPaymentOverDueKeyValue = dtsubscriptionPaymentConfig != null && dtsubscriptionPaymentConfig.Rows.Count > 0 ?
-            int.Parse(dtsubscriptionPaymentConfig.Rows[0][1].ToString()) : 0;
-    }
-
-    protected void UserAccessValidation()
-    {
-        try
-        {
-            int CurrentUserID = GetSessionUserID();
-            if (CurrentUserID > 0)
-            {
-                //string PageURL = UDFLib.GetPageURL(Request.Path.ToUpper());
-                string PageURL = "";
-                if (HttpContext.Current.Request.Url.ToString().Contains("menuid"))
-                {
-                    PageURL = UDFLib.GetPageURL(Request.Url.PathAndQuery.ToString().ToUpper());
-
-                }
-                else
-                {
-                    PageURL = PageURL = UDFLib.GetPageURL(Request.Path.ToUpper());
-
-                }
-
-                objUA = objUser.Get_UserAccessForPage(CurrentUserID, PageURL);
-                if (objUA.View == 0 && objUA.Menu_Code > 0)
-                    Response.Redirect("~/default.aspx?msgid=1");
-            }
-        }
-        catch (Exception ex)
-        {
-            UDFLib.WriteExceptionLog(ex);
-        }
-    }
-
-    protected void AssignSPMModuleID()
-    {
-        try
-        {
-
-            // Get the Absolute path of the url
-            System.IO.FileInfo oInfo = new System.IO.FileInfo(System.Web.HttpContext.Current.Request.Url.AbsolutePath);
-            //if (uc_Report_Issue!=null)
-            //{
-            //    // Get the Page Name
-            //    SqlDataReader dr = BLL_Infra_Common.Get_SPM_Module_ID(oInfo.Name);
-            //    uc_Report_Issue.ModuleID = "13";
-            //    if (dr.HasRows)
-            //    {
-            //        dr.Read();
-            //        string ModuleID = dr["SPM_Module_ID"].ToString();
-            //        //Assign the module ID into the Feeb back button.
-            //        /* if there is ModuleID is Empty it means there is no  value of  SPM_Module_ID  coloumn in Lib_Menu table
-            //            In this case Feedback would be record under 'COMMON' module ID = 13  under SPM bug traker. 
-            //         */
-            //        if (ModuleID != "")
-            //            uc_Report_Issue.ModuleID = ModuleID;
-            //        else
-            //            uc_Report_Issue.ModuleID = "13";
-            //    }
-            //}
-        }
-        catch (Exception ex)
-        {
-            UDFLib.WriteExceptionLog(ex);
-        }
-
-    }
-
-    protected void LogoutMe(object sender, EventArgs e)
-    {
-        try
-        {
-            if (Session["USERID"] != null)
-            {
-                BLL_Infra_UserCredentials objBLL = new BLL_Infra_UserCredentials();
-                try
-                {
-                    objBLL.End_Session(int.Parse(Session["USERID"].ToString()));
-                }
-                catch { }
-                finally { objBLL = null; }
-            }
-            FormsAuthentication.SignOut();
-            Session.RemoveAll();
-            Session.Abandon();
-        }
-        catch (Exception ex)
-        {
-            UDFLib.WriteExceptionLog(ex);
-        }
-    }
-
-    protected void ScriptManager1_AsyncPostBackError(object sender, AsyncPostBackErrorEventArgs e)
-    {
-        try
-        {
-            string js = "alert('" + e.Exception.Message + "');";
-            ScriptManager.RegisterStartupScript(this, this.GetType(), "masterpageexpmsg", js, true);
-        }
-        catch (Exception ex)
-        {
-            UDFLib.WriteExceptionLog(ex);
-        }
-    }
-
-    protected void filterClear_Click(object sender, EventArgs e)
-    {
-        try
-        {
-            objCommonBLL.Clear_Slf_filter(Session["token"].ToString(), "Infra");
-            Response.Redirect(Request.RawUrl);
-        }
-        catch (Exception ex)
-        {
-            throw ex;
-        }
-    }
-
-    // Add this method to handle async operations properly
-    protected override void OnPreRender(EventArgs e)
-    {
-        base.OnPreRender(e);
-        
-        // Ensure async tasks are completed before rendering
-        if (PageAsyncTaskManager != null)
-        {
-            // This ensures all registered async tasks complete before rendering
-        }
-    }
-}
-
-public class Filter
-{
-    public Boolean clearFilters { get; set; }
-}
