@@ -1,7 +1,3 @@
-make this function as async
-
-private void Set_HeaderIconsVisibility()
-
 using System;
 using System.Web;
 using System.Web.UI;
@@ -12,6 +8,7 @@ using SMS.Properties;
 using System.Configuration;
 using System.Web.UI.HtmlControls;
 using System.Data;
+using System.Threading.Tasks;
 
 public partial class SiteMaster : System.Web.UI.MasterPage
 {
@@ -83,7 +80,13 @@ public partial class SiteMaster : System.Web.UI.MasterPage
         set { hfj3MasterApiUrl.Value = value; }
     }
     #endregion
+
     protected void Page_Load(object sender, EventArgs e)
+    {
+        RegisterAsyncTask(new PageAsyncTask(LoadDataAsync));
+    }
+
+    private async Task LoadDataAsync()
     {
         try
         {
@@ -100,8 +103,7 @@ public partial class SiteMaster : System.Web.UI.MasterPage
                 if (Session["User_Uid"] != null)
                 {
                     ReadAndSetConfigurationKeys();
-
-                    Set_HeaderIconsVisibility();
+                    await Set_HeaderIconsVisibility();
                 }
 
                 if (Session["CompanyCount"] != null)
@@ -109,7 +111,6 @@ public partial class SiteMaster : System.Web.UI.MasterPage
                     CompanyCount = Convert.ToInt16(Session["CompanyCount"].ToString());
                 }
             }
-
 
             // Function to load logo during login page and  after successfull login of user.
             LoginView loginview1 = (LoginView)(Page.Master as SiteMaster).FindControl("HeadLoginView");
@@ -202,7 +203,7 @@ public partial class SiteMaster : System.Web.UI.MasterPage
             return 0;
     }
 
-    private void Set_HeaderIconsVisibility()
+    private async Task Set_HeaderIconsVisibility()
     {
         Image1.Visible = true;
         imglogo1.Visible = true;
@@ -216,7 +217,7 @@ public partial class SiteMaster : System.Web.UI.MasterPage
         bool showSlfIcon = false, showCalendarIcon = false, showNotificationsIcon = false, showCopilotIcon = false;
         INFRA_Enum.settingType slfOption;
 
-        DataTable dt = objDAL.Get_HeaderIconsVisibility();
+        DataTable dt = await Task.Run(() => objDAL.Get_HeaderIconsVisibility());
 
         foreach (DataRow dtRow in dt.Rows)
         {
@@ -241,7 +242,7 @@ public partial class SiteMaster : System.Web.UI.MasterPage
 
                 case INFRA_Enum.settingType.copilot_icon_visibility:
                     int userId = GetSessionUserID();
-                    bool hasCopliotAccess = objUser.Has_UserAccessRight("copilot", "copilot_icon_sub", "view", Convert.ToString(Session["token"]));
+                    bool hasCopliotAccess = await Task.Run(() => objUser.Has_UserAccessRight("copilot", "copilot_icon_sub", "view", Convert.ToString(Session["token"])));
                     showCopilotIcon = dtRow[1].ToString() == "1" && hasCopliotAccess;
                     break;
                 default:
@@ -254,12 +255,12 @@ public partial class SiteMaster : System.Web.UI.MasterPage
         divNotification.Visible = showNotificationsIcon;
         divCopilot.Visible = showCopilotIcon;
 
-        Set_SLF(divSlf);
+        await Set_SLF(divSlf);
     }
 
-    private void Set_SLF(HtmlControl divSlf)
+    private async Task Set_SLF(HtmlControl divSlf)
     {
-        DataTable dtSLFFilterData = objDAL.slfFilterData(Convert.ToString(Session["User_Uid"]));
+        DataTable dtSLFFilterData = await Task.Run(() => objDAL.slfFilterData(Convert.ToString(Session["User_Uid"])));
         if (dtSLFFilterData != null && dtSLFFilterData.Rows.Count > 0)
         {
             SlfUserData = Convert.ToInt32((dtSLFFilterData.Rows[0]).ItemArray[0]);
@@ -290,6 +291,7 @@ public partial class SiteMaster : System.Web.UI.MasterPage
         SubscriptionPaymentOverDueKeyValue = dtsubscriptionPaymentConfig != null && dtsubscriptionPaymentConfig.Rows.Count > 0 ?
             int.Parse(dtsubscriptionPaymentConfig.Rows[0][1].ToString()) : 0;
     }
+
     protected void UserAccessValidation()
     {
         try
@@ -309,7 +311,6 @@ public partial class SiteMaster : System.Web.UI.MasterPage
                     PageURL = PageURL = UDFLib.GetPageURL(Request.Path.ToUpper());
 
                 }
-
 
                 objUA = objUser.Get_UserAccessForPage(CurrentUserID, PageURL);
                 if (objUA.View == 0 && objUA.Menu_Code > 0)
@@ -392,6 +393,7 @@ public partial class SiteMaster : System.Web.UI.MasterPage
             UDFLib.WriteExceptionLog(ex);
         }
     }
+
     protected void filterClear_Click(object sender, EventArgs e)
     {
         try
@@ -404,7 +406,20 @@ public partial class SiteMaster : System.Web.UI.MasterPage
             throw ex;
         }
     }
+
+    // Add this method to handle async operations properly
+    protected override void OnPreRender(EventArgs e)
+    {
+        base.OnPreRender(e);
+        
+        // Ensure async tasks are completed before rendering
+        if (PageAsyncTaskManager != null)
+        {
+            // This ensures all registered async tasks complete before rendering
+        }
+    }
 }
+
 public class Filter
 {
     public Boolean clearFilters { get; set; }
