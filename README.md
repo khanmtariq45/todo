@@ -1,81 +1,158 @@
-CREATE OR ALTER PROCEDURE [dbo].[FMS_SP_Sync_VerifyToVessel] 
+CREATE OR ALTER PROCEDURE [dbo].[FMS_SP_Sync_VerifyToVessel]
     @Sync_Log_ID INT,
     @File_Id INT,
-	@Status_ID INT,
-	@Schedule_ID INT,
-    @Version INT,
+    @Status_ID INT = NULL,
+    @Schedule_ID INT = NULL,
+    @Version INT
 AS
 BEGIN
     SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @ErrorMessage NVARCHAR(4000),
+            @ErrorSeverity INT,
+            @ErrorState INT,
+            @ErrorLine INT,
+            @ErrorProcedure NVARCHAR(128);
 
     BEGIN TRY
-        DECLARE @Uid UNIQUEIDENTIFIER, 
-                @schedule_from DATETIMEOFFSET = GETDATE() - 30, 
-                @schedule_to DATETIMEOFFSET = GETDATE() + 30, 
-                @batchCommands VARCHAR(MAX), 
-                @vesselId INT, 
-                @documentName VARCHAR(200),
+        -- Validate required parameters
+        IF @Sync_Log_ID IS NULL OR @File_Id IS NULL OR @Version IS NULL
+        BEGIN
+            RAISERROR('Sync_Log_ID, File_Id, and Version are required parameters.', 16, 1);
+            RETURN;
+        END
+
+        DECLARE @Uid UNIQUEIDENTIFIER = NEWID(),
+                @schedule_from DATETIMEOFFSET = DATEADD(DAY, -30, SYSDATETIMEOFFSET()),
+                @schedule_to DATETIMEOFFSET = DATEADD(DAY, 30, SYSDATETIMEOFFSET()),
+                @batchCommands NVARCHAR(MAX),
+                @vesselId INT,
+                @documentName NVARCHAR(500),
+                @filePath NVARCHAR(1000),
                 @ScheduleExists BIT = 0,
-                @StatusExists BIT = 0;
+                @StatusExists BIT = 0,
+                @syncUpdateQuery NVARCHAR(MAX);
 
-        -- Get vessel ID
-        SELECT @vesselId = VESSEL_ID
-        FROM LIB_VESSELS WITH (NOLOCK)
-        WHERE active_status = 1 AND installation = 1;
+        -- Get vessel ID with proper indexing
+        SELECT TOP 1 @vesselId = VESSEL_ID
+        FROM dbo.LIB_VESSELS
+        WHERE active_status = 1 
+          AND installation = 1
+          AND VESSEL_ID IS NOT NULL;
 
-        -- Check if Schedule exists on office side
-        IF (@Schedule_ID IS NOT NULL)
+        IF @vesselId IS NULL
         BEGIN
-            IF EXISTS (SELECT 1 FROM FMS_DTL_Schedule WITH (NOLOCK) 
-                       WHERE Schedule_ID = @Schedule_ID AND active_status = 1)
-                SET @ScheduleExists = 1;
+            RAISERROR('No active installation vessel found.', 16, 1);
+            RETURN;
         END
 
-        -- Check if Schedule Status exists on office side
-        IF (@Status_ID IS NOT NULL)
+        -- Check if Schedule exists
+        IF @Schedule_ID IS NOT NULL
         BEGIN
-            IF EXISTS (SELECT 1 FROM FMS_DTL_Schedule_Status WITH (NOLOCK) 
-                       WHERE Status_ID = @Status_ID AND active_status = 1)
-                SET @StatusExists = 1;
+            SET @ScheduleExists = CASE 
+                WHEN EXISTS (
+                    SELECT 1 
+                    FROM dbo.FMS_DTL_Schedule 
+                    WHERE Schedule_ID = @Schedule_ID 
+                      AND active_status = 1
+                ) THEN 1 
+                ELSE 0 
+            END;
         END
 
-        -- Get document name from FMS file table
-        SELECT @documentName = REPLACE(RIGHT(FilePath, (CHARINDEX('/', REVERSE(FilePath), 1))), '/', '')
-        FROM FMS_DTL_File WITH (NOLOCK)
-        WHERE ID = @File_Id AND [Version] = @Version
-            AND active_status = 1;
-
-        -- If document not found, mark for retry
-        IF (@documentName IS NULL)
+        -- Check if Schedule Status exists
+        IF @Status_ID IS NOT NULL
         BEGIN
-            DECLARE @query VARCHAR(500) = FORMATMESSAGE(
-                'UPDATE FMS_DTL_Schedule_Status_SyncLog SET Status = ''%s'', Metadata_Sync_Verified = %i, File_Sync_Verified = %i, Schedule_Sync_Verified = %i, Schedule_Status_Sync_Verified = %i WHERE Sync_Log_ID = %i',
-                'r', 0, 0, @ScheduleExists, @StatusExists, @Sync_Log_ID
-            );
-            
-            EXEC [SYNC_SP_DataSynchronizer_DataLog] '', '', '', @vesselId, @query;
+            SET @StatusExists = CASE 
+                WHEN EXISTS (
+                    SELECT 1 
+                    FROM dbo.FMS_DTL_Schedule_Status 
+                    WHERE Status_ID = @Status_ID 
+                      AND active_status = 1
+                ) THEN 1 
+                ELSE 0 
+            END;
+        END
+
+        -- Get document information with better file path parsing
+        SELECT TOP 1 
+            @filePath = FilePath,
+            @documentName = CASE 
+                WHEN CHARINDEX('/', REVERSE(FilePath)) > 0 
+                THEN RIGHT(FilePath, CHARINDEX('/', REVERSE(FilePath)) - 1)
+                ELSE FilePath
+            END
+        FROM dbo.FMS_DTL_File
+        WHERE ID = @File_Id 
+          AND [Version] = @Version
+          AND active_status = 1;
+
+        -- If document not found
+        IF @documentName IS NULL
+        BEGIN
+            SET @syncUpdateQuery = N'
+                UPDATE dbo.FMS_DTL_Schedule_Status_SyncLog 
+                SET Status = ''r'',
+                    Metadata_Sync_Verified = 0,
+                    File_Sync_Verified = 0,
+                    Schedule_Sync_Verified = @ScheduleExists,
+                    Schedule_Status_Sync_Verified = @StatusExists,
+                    Modified_By = 1,
+                    Date_Of_Modification = GETDATE()
+                WHERE Sync_Log_ID = @SyncLogID';
+
+            EXEC dbo.SYNC_SP_DataSynchronizer_DataLog 
+                @Vessel_ID = @vesselId,
+                @Query = @syncUpdateQuery,
+                @Params = N'@ScheduleExists BIT, @StatusExists BIT, @SyncLogID INT',
+                @ParamValues = '@ScheduleExists=' + CAST(@ScheduleExists AS NVARCHAR(1)) + 
+                             ',@StatusExists=' + CAST(@StatusExists AS NVARCHAR(1)) +
+                             ',@SyncLogID=' + CAST(@Sync_Log_ID AS NVARCHAR(20));
         END
         ELSE
         BEGIN
-            -- Create batch command to verify file exists on vessel and update sync status
-            SET @batchCommands = 'START /B "FMS Sync Validation" cmd /c "set FILEEXIST=0 & (IF exist C:\\JIBEApps\\App\\Uploads\\FMS\\DOCUMENTS\\' + 
-                CAST(@documentName AS VARCHAR(350)) + 
-                ' ( set FILEEXIST=1 )) & (sqlcmd -S "localhost\jibeexpress" -U JIBE_SHIP -P "J^%5x@gklj551^^" -d jibeship -Q "DECLARE @opVarchar varchar(max), @Vessel_ID int, @Sync_Log_ID int = ' + 
-                CAST(@Sync_Log_ID AS VARCHAR(50)) + ', @ScheduleExists bit = ' + CAST(@ScheduleExists AS VARCHAR(1)) + ', @StatusExists bit = ' + CAST(@StatusExists AS VARCHAR(1)) + '; ' +
-                'SELECT TOP 1 @Vessel_ID = Vessel_id FROM lib_vessels WHERE active_status = 1 AND installation = 1; ' +
-                'SET @opVarchar = ''UPDATE FMS_DTL_Schedule_Status_SyncLog SET Status = case when $(FILEEXIST) = 0' +
-                CASE WHEN @Schedule_ID IS NOT NULL THEN ' OR @ScheduleExists = 0' ELSE '' END +
-                CASE WHEN @Status_ID IS NOT NULL THEN ' OR @StatusExists = 0' ELSE '' END +
-                ' then ''''r'''' else ''''c'''' end, ' +
-                'Metadata_Sync_Verified = 1, File_Sync_Verified = $(FILEEXIST), ' +
-                'Schedule_Sync_Verified = @ScheduleExists, ' +
-                'Schedule_Status_Sync_Verified = @StatusExists, ' +
-                'Modified_By = 1, Date_Of_Modification = GETDATE() WHERE Sync_Log_ID = @Sync_Log_ID''; ' +
-                'EXEC [SYNC_SP_DataSynchronizer_DataLog] '''','''','''',@Vessel_ID,@opVarchar")"  & exit 0';
-            
-            SET @Uid = NEWID();
-            
-            INSERT INTO inf_vessel_app_maintanance(
+            -- Use a configuration table or parameter for paths/credentials
+            DECLARE @VesselDBName NVARCHAR(128) = 'jibeship',
+                    @VesselDBServer NVARCHAR(128) = 'localhost\jibeexpress',
+                    @BasePath NVARCHAR(500) = 'C:\JIBEApps\App\Uploads\FMS\DOCUMENTS\';
+
+            -- Create secure batch command using configuration
+            SET @batchCommands = N'
+                SET NOCOUNT ON;
+                DECLARE @FileExist BIT = 0;
+                
+                -- Check if file exists using xp_fileexist (requires appropriate permissions)
+                DECLARE @FileCheck TABLE (FileExists INT, IsDirectory INT, ParentDirectoryExists INT);
+                INSERT INTO @FileCheck
+                EXEC master.dbo.xp_fileexist ''' + @BasePath + @documentName + N''';
+                
+                SELECT @FileExist = FileExists FROM @FileCheck;
+                
+                -- Update sync log
+                UPDATE dbo.FMS_DTL_Schedule_Status_SyncLog 
+                SET Status = CASE 
+                    WHEN @FileExist = 0 
+                       OR (@Schedule_ID IS NOT NULL AND @ScheduleExists = 0)
+                       OR (@Status_ID IS NOT NULL AND @StatusExists = 0)
+                    THEN ''r''
+                    ELSE ''c''
+                END,
+                Metadata_Sync_Verified = 1,
+                File_Sync_Verified = @FileExist,
+                Schedule_Sync_Verified = @ScheduleExists,
+                Schedule_Status_Sync_Verified = @StatusExists,
+                Modified_By = 1,
+                Date_Of_Modification = GETDATE()
+                WHERE Sync_Log_ID = ' + CAST(@Sync_Log_ID AS NVARCHAR(20)) + N';
+            ';
+
+            -- Log the batch command for debugging (remove in production)
+            INSERT INTO dbo.Sync_DebugLog (LogDate, CommandType, CommandText, Vessel_ID)
+            VALUES (GETDATE(), 'BatchCommand', LEFT(@batchCommands, 4000), @vesselId);
+
+            -- Insert into maintenance table
+            INSERT INTO dbo.inf_vessel_app_maintenance (
                 uid, 
                 vessel_id, 
                 schedule_from, 
@@ -87,9 +164,10 @@ BEGIN
                 active_status, 
                 is_server, 
                 is_client, 
-                is_force
+                is_force,
+                task_type
             )
-            VALUES(
+            VALUES (
                 @Uid, 
                 @vesselId, 
                 @schedule_from, 
@@ -101,18 +179,38 @@ BEGIN
                 1, 
                 1, 
                 0, 
-                0
+                0,
+                'FMS_Sync_Verify'
             );
 
-		END
+            -- Return success information
+            SELECT 
+                @Uid AS BatchUID,
+                @vesselId AS VesselID,
+                @documentName AS DocumentName,
+                @ScheduleExists AS ScheduleExists,
+                @StatusExists AS StatusExists;
+        END
     END TRY
     BEGIN CATCH
-        -- Log error details
-        DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
-        DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
-        DECLARE @ErrorState INT = ERROR_STATE();
+        SELECT 
+            @ErrorMessage = ERROR_MESSAGE(),
+            @ErrorSeverity = ERROR_SEVERITY(),
+            @ErrorState = ERROR_STATE(),
+            @ErrorLine = ERROR_LINE(),
+            @ErrorProcedure = ISNULL(ERROR_PROCEDURE(), OBJECT_NAME(@@PROCID));
 
-        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+        -- Log error to error table
+        INSERT INTO dbo.Sync_ErrorLog (
+            ErrorDate, ProcedureName, ErrorLine, ErrorMessage, 
+            ErrorSeverity, ErrorState, Sync_Log_ID, Vessel_ID
+        )
+        VALUES (
+            GETDATE(), @ErrorProcedure, @ErrorLine, @ErrorMessage,
+            @ErrorSeverity, @ErrorState, @Sync_Log_ID, @vesselId
+        );
+
+        -- Re-throw the error for the calling application
+        THROW;
     END CATCH
-
 END
