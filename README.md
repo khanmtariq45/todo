@@ -1,5 +1,3 @@
-correct syntax of single and double qoute
-
 DECLARE 
 @SqlScript nvarchar(max) = 
 '
@@ -245,8 +243,8 @@ LEFT JOIN JRA_LIB_TYPES Lik on AD.Severity_ID = Lik.Type_ID
 LEFT JOIN JRA_LIB_TYPES Rsk on AD.Initial_Risk_Value = Rsk.Type_ID                    
 where                   
 AD.Assessment_Dtl_ID=@Assessment_Dtl_IDT and  AD.Vessel_ID=@Vessel_IDT and AD.Office_ID=@Office_IDT                  
-set @TableName = ''JRA_DTL_ASSESSMENT_DETAILS_LOG''                  
-set  @PkCondition = ''Assessment_Dtl_ID=''+cast(@Assessment_Dtl_IDT as varchar)+'' and Vessel_ID=''+CAST(@Vessel_IDT as varchar)+''and Office_ID=''+cast(@Office_IDT as varchar)+'' and Version=''+cast(@NewDtlVersion as varchar)+'' and Log_Office_ID=1''              
+set @TableName = ''''JRA_DTL_ASSESSMENT_DETAILS_LOG''''                  
+set  @PkCondition = ''''Assessment_Dtl_ID=''''+cast(@Assessment_Dtl_IDT as varchar)+'''' and Vessel_ID=''''+CAST(@Vessel_IDT as varchar)+''''and Office_ID=''''+cast(@Office_IDT as varchar)+'''' and Version=''''+cast(@NewDtlVersion as varchar)+'''' and Log_Office_ID=1''''              
  
      
      
@@ -266,7 +264,7 @@ end
 declare @New_Approval_Status_ID int = null                  
 declare @Mode int = 0                  
                    
-if @Status = ''Rework''                  
+if @Status = ''''Rework''''                  
 begin                  
                   
                    
@@ -315,7 +313,7 @@ GETDATE(),
 )                  
                   
                   
-if (select Mode from JRA_DTL_RISK_ASSESSMENTS where Assessment_ID=@Assessment_ID and Vessel_ID=@Vessel_ID and Active_Status = 1) = ''Edit''                  
+if (select Mode from JRA_DTL_RISK_ASSESSMENTS where Assessment_ID=@Assessment_ID and Vessel_ID=@Vessel_ID and Active_Status = 1) = ''''Edit''''                  
 begin     
 set @Mode = 1                  
 update JRA_DTL_RISK_ASSESSMENTS set Mode = null,Assessment_Status = @Status where Assessment_ID=@Assessment_ID and Vessel_ID=@Vessel_ID and Active_Status = 1                  
@@ -326,8 +324,8 @@ update JRA_DTL_RISK_ASSESSMENTS set Assessment_Status = @Status where Assessment
 end                  
                   
  
-set @TableName = ''JRA_DTL_RISK_ASSESSMENTS''                  
-set @PkCondition = ''Assessment_ID=''+CAST(@Assessment_ID as varchar(50))+'' and Vessel_ID=''+cast(@Vessel_ID as varchar)                  
+set @TableName = ''''JRA_DTL_RISK_ASSESSMENTS''''                  
+set @PkCondition = ''''Assessment_ID=''''+CAST(@Assessment_ID as varchar(50))+'''' and Vessel_ID=''''+cast(@Vessel_ID as varchar)                  
 EXEC SYNC_SP_DataSynch_MultiPK_DataLog @TableName, @PkCondition, @VESSEL_ID                  
                    
                    
@@ -340,8 +338,8 @@ begin
 declare @IDT int = (select top 1 Approval_Status_ID from @IDS)         
 DECLARE  @Office_ID int  = (Select Office_ID from @IDS where Approval_Status_ID = @IDT)      
 select @IDT, @Office_ID           
-set @TableName = ''JRA_DTL_HAZZARDS_APPROVAL''                  
-set @PkCondition = ''Approval_Status_ID=''+CAST(@IDT as varchar(50))+'' and Vessel_ID=''+cast(@Vessel_ID as varchar(50))+'' and Office_ID=''''+cast(@Office_ID as varchar(50))                  
+set @TableName = ''''JRA_DTL_HAZZARDS_APPROVAL''''                  
+set @PkCondition = ''''Approval_Status_ID=''''+CAST(@IDT as varchar(50))+'''' and Vessel_ID=''''+cast(@Vessel_ID as varchar(50))+'''' and Office_ID=''''''+cast(@Office_ID as varchar(50))                  
 EXEC SYNC_SP_DataSynch_MultiPK_DataLog @TableName, @PkCondition, @VESSEL_ID                   
 delete from @IDS where Approval_Status_ID = @IDT                 
 end                  
@@ -352,7 +350,7 @@ end
                   
 end                   
                   
-if @Status = ''Approved''                  
+if @Status = ''''Approved''''                  
 begin
 	SET @New_Approval_Status_ID = (SELECT  ISNULL(MAX(Approval_Status_ID)+ 1, 1) FROM JRA_DTL_HAZZARDS_APPROVAL);   
 
@@ -396,25 +394,25 @@ begin
 	);
 
 	declare @verificationType varchar(50) = [dbo].[JRA_GET_VERIFICATION_TYPE](@Work_categ_ID, @Assessment_ID, @Vessel_ID);
-	IF @verificationType = ''Office''
+	IF @verificationType = ''''Office''''
 	BEGIN
-		SET @Status= ''Approval Pending'';
+		SET @Status= ''''Approval Pending'''';
 	END
 			
 	UPDATE JRA_DTL_RISK_ASSESSMENTS
 	SET Assessment_Status = @Status, Modified_By = @UserID, Date_Of_Modification = GETDATE()
 	WHERE Active_Status = 1 AND Assessment_ID = @Assessment_ID AND Vessel_ID = @Vessel_ID;
  
-  set @TableName = ''JRA_DTL_RISK_ASSESSMENTS''                  
-  set @PkCondition = ''Assessment_ID=''+CAST(@Assessment_ID as varchar(50))+'' and Vessel_ID=''+cast(@Vessel_ID as varchar)                  
+  set @TableName = ''''JRA_DTL_RISK_ASSESSMENTS''''                  
+  set @PkCondition = ''''Assessment_ID=''''+CAST(@Assessment_ID as varchar(50))+'''' and Vessel_ID=''''+cast(@Vessel_ID as varchar)                  
   EXEC SYNC_SP_DataSynch_MultiPK_DataLog @TableName, @PkCondition, @VESSEL_ID                  
-  set @TableName = ''JRA_DTL_HAZZARDS_APPROVAL''                  
-  set @PkCondition = ''Approval_Status_ID=''+CAST(@New_Approval_Status_ID as varchar(50))+'' and Vessel_ID=''+cast(@Vessel_ID as varchar)+'' and Office_ID=1''                  
+  set @TableName = ''''JRA_DTL_HAZZARDS_APPROVAL''''                  
+  set @PkCondition = ''''Approval_Status_ID=''''+CAST(@New_Approval_Status_ID as varchar(50))+'''' and Vessel_ID=''''+cast(@Vessel_ID as varchar)+'''' and Office_ID=1''''                  
   EXEC SYNC_SP_DataSynch_MultiPK_DataLog @TableName, @PkCondition, @VESSEL_ID                   
                   
 end
 
-IF @Status = ''Approval Pending''               
+IF @Status = ''''Approval Pending''''               
 BEGIN   
     IF NOT EXISTS (SELECT 1 
                    FROM JRA_LIB_HAZARD_APPROVAL_LEVELS 
@@ -422,7 +420,7 @@ BEGIN
                    AND Approval_Level > 0
                    AND Active_Status = 1)
     BEGIN
-        SET @Status = ''Approved'';
+        SET @Status = ''''Approved'''';
     END 
 
     UPDATE JRA_DTL_RISK_ASSESSMENTS              
@@ -450,8 +448,8 @@ select Assessment_Dtl_ID,Vessel_ID,Office_ID from JRA_DTL_ASSESSMENT_DETAILS whe
 while exists (select 1 from @Ass_Details)                  
 begin                   
 select top 1 @Office_ID_T = Office_ID,@Assessment_Dtl_ID_T = Assessment_Dtl_ID   from @Ass_Details             
-set @TableName = ''JRA_DTL_ASSESSMENT_DETAILS''                  
-set @PkCondition = ''Assessment_Dtl_ID=''+CAST(@Assessment_Dtl_ID_T as varchar(50))+'' and Vessel_ID=''+cast(@Vessel_ID as varchar)+'' and Office_ID=''+cast(@Office_ID_T as varchar)                  
+set @TableName = ''''JRA_DTL_ASSESSMENT_DETAILS''''                  
+set @PkCondition = ''''Assessment_Dtl_ID=''''+CAST(@Assessment_Dtl_ID_T as varchar(50))+'''' and Vessel_ID=''''+cast(@Vessel_ID as varchar)+'''' and Office_ID=''''+cast(@Office_ID_T as varchar)                  
 EXEC SYNC_SP_DataSynch_MultiPK_DataLog @TableName, @PkCondition, @VESSEL_ID                    
 delete top(1) from @Ass_Details                  
 end                   
@@ -479,16 +477,16 @@ EXEC(''CREATE OR ALTER FUNCTION [dbo].[JRA_GET_PENDING_APPROVERS]
             
             DECLARE @Pending_Approval_Level INT = [dbo].[JRA_GET_PENDING_APPROVAL_LEVEL](@Work_Categ_ID, @Assessment_ID, @Vessel_ID);  
             DECLARE @MAX_Approval_Level INT=0;
-                IF (@Assessment_Status = ''Approval Pending'')
+                IF (@Assessment_Status = ''''Approval Pending'''')
                 BEGIN
-                SET @vStep=''1'';
+                SET @vStep=''''1'''';
                 declare @verificationType Varchar(50) = [dbo].[JRA_GET_VERIFICATION_TYPE](@Work_Categ_ID, @Assessment_ID, @Vessel_ID);
 
-                    IF @verificationType = ''Office''
+                    IF @verificationType = ''''Office''''
                     BEGIN            
                         SET @vStep=@vStep+'',2'';
                         SET @MAX_Approval_Level=(SELECT Max(Approval_Level) from JRA_LIB_HAZARD_APPROVAL_LEVELS where Work_Categ_ID=@Work_Categ_ID and Approval_Based_On=@Approval_Based_On and Active_Status=1)
-                        IF @Approval_Based_On = ''R''
+                        IF @Approval_Based_On = ''''R''''
                         BEGIN
                             SET @vStep=@vStep+'',3'';
                             IF @Pending_Approval_Level IS NOT NULL AND EXISTS (
@@ -509,17 +507,17 @@ EXEC(''CREATE OR ALTER FUNCTION [dbo].[JRA_GET_PENDING_APPROVERS]
                                 INNER JOIN JRA_LIB_HAZARD_APPROVAL_LEVELS HAL ON LHA.Aprroval_Level_ID = HAL.Approval_Level_ID AND LHA.Approval_Based_on=HAL.Approval_Based_on AND LHA.Active_Status = 1
                                 WHERE r.active_status = 1 and HAL.Approval_Level = @Pending_Approval_Level
                                     AND HAL.Work_Categ_ID = @Work_Categ_ID AND HAL.Approval_Based_On=@Approval_Based_On
-                                FOR XML PATH(''''), TYPE
-                            ).value(''.'', ''NVARCHAR(MAX)''), 1, 2, '''');
-                            IF isnull(@Result,'''')<>''''
+                                FOR XML PATH(''''''''), TYPE
+                            ).value(''''.'''', ''''NVARCHAR(MAX)''''), 1, 2, '''''''');
+                            IF isnull(@Result,'''''''')<>''''''''
                                 BEGIN
-                                    RETURN isnull(@Result,'''')+ CHAR(13) + CHAR(10) +''(In L''+cast(@Pending_Approval_Level as nvarchar(5)) +'' out of L''+cast(@MAX_Approval_Level as nvarchar(5))+'')'';
+                                    RETURN isnull(@Result,'''''''')+ CHAR(13) + CHAR(10) +''''(In L''''+cast(@Pending_Approval_Level as nvarchar(5)) +'''' out of L''''+cast(@MAX_Approval_Level as nvarchar(5))+'''')'''';
                                 END
                             ELSE
-                                RETURN ''''
+                                RETURN ''''''''
                             END
                         END
-                        ELSE IF @Approval_Based_On = ''U''
+                        ELSE IF @Approval_Based_On = ''''U''''
                         BEGIN                
                             SET @vStep=@vStep+'',5'';
                             IF @Pending_Approval_Level IS NOT NULL AND EXISTS (
@@ -534,21 +532,21 @@ EXEC(''CREATE OR ALTER FUNCTION [dbo].[JRA_GET_PENDING_APPROVERS]
                             BEGIN
                                 SET @vStep=@vStep+'',6'';
                                 SELECT @Result=STUFF((
-                                SELECT DISTINCT '', '' + isnull(u.first_name,'''')+'' ''+isnull(u.last_name,'''')
+                                SELECT DISTINCT '', '' + isnull(u.first_name,'''''''')+'''' ''''+isnull(u.last_name,'''''''')
                                 FROM LIB_USER u
                                 INNER JOIN INF_DTL_USER_VESSEL_ASSIGNMENT uva on uva.User_Id=u.userid
                                 INNER JOIN JRA_LIB_HAZZARDS_APPROVAR LHA ON LHA.Approvar_Detail_ID = uva.user_id AND uva.Vessel_ID=@Vessel_ID
                                 INNER JOIN JRA_LIB_HAZARD_APPROVAL_LEVELS HAL ON LHA.Aprroval_Level_ID = HAL.Approval_Level_ID AND LHA.Approval_Based_on=HAL.Approval_Based_on AND LHA.Active_Status = 1
                                 WHERE u.active_status = 1 and uva.active_status=1 and HAL.Approval_Level = @Pending_Approval_Level
                                     AND HAL.Work_Categ_ID = @Work_Categ_ID AND HAL.Approval_Based_On=@Approval_Based_On					
-                                FOR XML PATH(''''), TYPE
-                            ).value(''.'', ''NVARCHAR(MAX)''), 1, 2, '''');
-                            IF isnull(@Result,'''')<>''''
+                                FOR XML PATH(''''''''), TYPE
+                            ).value(''''.'''', ''''NVARCHAR(MAX)''''), 1, 2, '''''''');
+                            IF isnull(@Result,'''''''')<>''''''''
                                 BEGIN
-                                    RETURN isnull(@Result,'''')+ CHAR(13) + CHAR(10) +''(In L''+cast(@Pending_Approval_Level as nvarchar(5)) +'' out of L''+cast(@MAX_Approval_Level as nvarchar(5))+'')'';
+                                    RETURN isnull(@Result,'''''''')+ CHAR(13) + CHAR(10) +''''(In L''''+cast(@Pending_Approval_Level as nvarchar(5)) +'''' out of L''''+cast(@MAX_Approval_Level as nvarchar(5))+'''')'''';
                                 END
                             ELSE
-                                RETURN ''''
+                                RETURN ''''''''
                             END
                         END
                     END
@@ -562,13 +560,13 @@ EXEC(''CREATE OR ALTER FUNCTION [dbo].[JRA_GET_PENDING_APPROVERS]
                                 INNER JOIN JRA_LIB_HAZARD_APPROVAL_LEVELS HAL ON LHA.Aprroval_Level_ID = HAL.Approval_Level_ID AND LHA.Approval_Based_on=HAL.Approval_Based_on AND LHA.Active_Status = 1
                                 WHERE cr.is_active = 1 AND cr.Active_Status = 1 and HAL.Approval_Level = 0 and HAL.active_status=1 
                                     AND HAL.Work_Categ_ID = @Work_Categ_ID
-                                FOR XML PATH(''''), TYPE
-                            ).value(''.'', ''NVARCHAR(MAX)''), 1, 2, '''');
-                    return isnull(@Result,'''');
+                                FOR XML PATH(''''''''), TYPE
+                            ).value(''''.'''', ''''NVARCHAR(MAX)''''), 1, 2, '''''''');
+                    return isnull(@Result,'''''''');
                     END
                 END
-                SET @vStep=@vStep+'','',8'''';                
-            return ''''''''
+                SET @vStep=@vStep+'','',8'''''''';                
+            return ''''''''''''''''''''
             END;'')
 
 
@@ -577,24 +575,21 @@ EXEC(''CREATE OR ALTER FUNCTION [dbo].[JRA_GET_PENDING_APPROVERS]
 
 		SELECT @VesselID= VESSEL_ID FROM LIB_VESSELS WHERE ACTIVE_STATUS=1 and INSTALLATION=1;		
 
-		SET @Condition1 = ''work_categ_id in (select Work_Categ_ID from JRA_LIB_WORK_CATEGORY where Approval_Based_On=''''''''R'''''''' and active_status=1) AND Vessel_ID='' + CONVERT(VARCHAR(10), @VesselID)+'''''''';
-		SET @OfficeScript1=''EXEC sync.sync_records_by_condition ''''JRA_DTL_HAZZARDS_APPROVAL'''',''+ CONVERT(VARCHAR(10), @VesselID)+'',''''''+@Condition1+'''';
-		EXEC [SYNC_SP_DataSynchronizer_DataLog] '''', '''', '''', 0, @OfficeScript1
+		SET @Condition1 = ''work_categ_id in (select Work_Categ_ID from JRA_LIB_WORK_CATEGORY where Approval_Based_On=''''R'''' and active_status=1) AND Vessel_ID='' + CONVERT(VARCHAR(10), @VesselID);
+		SET @OfficeScript1=''EXEC sync.sync_records_by_condition ''''''JRA_DTL_HAZZARDS_APPROVAL'''''','' + CONVERT(VARCHAR(10), @VesselID) + '','''''' + @Condition1 + '''''''';
+		EXEC [SYNC_SP_DataSynchronizer_DataLog] '''', '''', '''', 0, @OfficeScript1;
 
-		SET @Condition2 = ''work_categ_id IN (select Work_Categ_ID from JRA_LIB_WORK_CATEGORY where Approval_Based_On=''''''''R'''''''' and active_status=1)'''''';
-		SET @OfficeScript2=''EXEC sync.sync_records_by_condition ''''JRA_LIB_HAZARD_APPROVAL_LEVELS'''',''+ CONVERT(VARCHAR(10), @VesselID)+'',''''''+@Condition2+'''';
-		EXEC [SYNC_SP_DataSynchronizer_DataLog] '''', '''', '''', 0, @OfficeScript2
+		SET @Condition2 = ''work_categ_id IN (select Work_Categ_ID from JRA_LIB_WORK_CATEGORY where Approval_Based_On=''''R'''' and active_status=1)'';
+		SET @OfficeScript2=''EXEC sync.sync_records_by_condition ''''''JRA_LIB_HAZARD_APPROVAL_LEVELS'''''','' + CONVERT(VARCHAR(10), @VesselID) + '','''''' + @Condition2 + '''''''';
+		EXEC [SYNC_SP_DataSynchronizer_DataLog] '''', '''', '''', 0, @OfficeScript2;
 
-		SET @Condition3 = ''Aprroval_Level_ID in (select Approval_Level from JRA_LIB_HAZARD_APPROVAL_LEVELS where work_categ_id IN (select Work_Categ_ID from JRA_LIB_WORK_CATEGORY where Approval_Based_On=''''''''R'''''''' and active_status=1) AND Vessel_ID='' + CONVERT(VARCHAR(10), @VesselID)+'''''''';
-		SET @OfficeScript3=''EXEC sync.sync_records_by_condition ''''JRA_LIB_HAZZARDS_APPROVAR'''',''+ CONVERT(VARCHAR(10), @VesselID)+'',''''''+@Condition3+'''';
-		EXEC [SYNC_SP_DataSynchronizer_DataLog] '''', '''', '''', 0, @OfficeScript3
+		SET @Condition3 = ''Aprroval_Level_ID in (select Approval_Level from JRA_LIB_HAZARD_APPROVAL_LEVELS where work_categ_id IN (select Work_Categ_ID from JRA_LIB_WORK_CATEGORY where Approval_Based_On=''''R'''' and active_status=1) AND Vessel_ID='' + CONVERT(VARCHAR(10), @VesselID);
+		SET @OfficeScript3=''EXEC sync.sync_records_by_condition ''''''JRA_LIB_HAZZARDS_APPROVAR'''''','' + CONVERT(VARCHAR(10), @VesselID) + '','''''' + @Condition3 + '''''''';
+		EXEC [SYNC_SP_DataSynchronizer_DataLog] '''', '''', '''', 0, @OfficeScript3;
 
-		SET @Condition4 = ''work_categ_id IN (select Work_Categ_ID from JRA_LIB_WORK_CATEGORY where Approval_Based_On=''''''''R'''''''' and active_status=1)'''''';
-		SET @OfficeScript4=''EXEC sync.sync_records_by_condition ''''JRA_LIB_WORK_CATEGORY'''',''+ CONVERT(VARCHAR(10), @VesselID)+'',''''''+@Condition4+'''';
-		EXEC [SYNC_SP_DataSynchronizer_DataLog] '''', '''', '''', 0, @OfficeScript4'
-
+		SET @Condition4 = ''work_categ_id IN (select Work_Categ_ID from JRA_LIB_WORK_CATEGORY where Approval_Based_On=''''R'''' and active_status=1)'';
+		SET @OfficeScript4=''EXEC sync.sync_records_by_condition ''''''JRA_LIB_WORK_CATEGORY'''''','' + CONVERT(VARCHAR(10), @VesselID) + '','''''' + @Condition4 + '''''''';
+		EXEC [SYNC_SP_DataSynchronizer_DataLog] '''', '''', '''', 0, @OfficeScript4;
+'
 
 select @SqlScript
-
-
-
