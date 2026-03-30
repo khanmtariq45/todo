@@ -1,17 +1,8 @@
-/****** Object:  StoredProcedure [qms].[J3_QMS_Get_Files] ******/
 SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
 GO
- 
--- =============================================
--- Description: List files in the QMS
---              Supports optional filtering by folder id and date range. Pagination via OFFSET/FETCH.
---              Returns unified result set aligned with J3_QMS_FILTER_SEARCH:
---              id, filename, type, size, fileVersion, parentId, publishedOn,
---              FilePathWithoutFilename, result_priority, RowsCount.
--- =============================================
- 
+
 CREATE OR ALTER PROCEDURE [qms].[J3_QMS_Get_Files]
 (
     @folder_id int = NULL,
@@ -25,56 +16,95 @@ CREATE OR ALTER PROCEDURE [qms].[J3_QMS_Get_Files]
 )
 AS
 BEGIN
-Declare @user_type nvarchar(100) = isnull((select top 1 User_Type from lib_user with (nolock) where UserId = @user_id),'');
-Declare @is_admin_user bit = 1;
-select * from		
-	(select fl.ID ID, fl.ID DocumentID,
-			LEFT(ISNULL(fl.Display_FilePath, N''),
-				CASE WHEN PATINDEX(N'%/%', ISNULL(fl.Display_FilePath, N'')) = 0 THEN 0
-				ELSE LEN(ISNULL(fl.Display_FilePath, N'')) - CHARINDEX(N'/', REVERSE(ISNULL(fl.Display_FilePath, N'')) + N'/')
-				END) + N'/' + fl.logfileid AS Filename,
-			ISNULL(fl.Actual_LogFileId, fl.logfileid) As FilenameWithoutPath,
-			LEFT(ISNULL(fl.Display_FilePath, N''),
-				CASE WHEN PATINDEX(N'%/%', ISNULL(fl.Display_FilePath, N'')) = 0 THEN 0
-				ELSE LEN(ISNULL(fl.Display_FilePath, N'')) - CHARINDEX(N'/', REVERSE(ISNULL(fl.Display_FilePath, N'')) + N'/')
-				END) AS FilePathWithoutFilename,
-			CASE 
-				WHEN CHARINDEX('.', REVERSE(fl.logfileid)) > 0 
-					AND CHARINDEX('.', fl.logfileid) > 0
-				THEN RIGHT(fl.logfileid, CHARINDEX('.', REVERSE(fl.logfileid)))
-				ELSE NULL
-			END AS Extension,
-            CONVERT(DECIMAL(9,2),ceiling((isnull(fl.Size,0) / 1024.00) * 100) / 100) AS Size,
-			fi.Version, fi.FilePath, fl.date_of_creatation CreateDate, fl.Date_of_modification as ModifyDate,fi.is_indexed Is_Indexed
-            FROM QMSDtlsFile_log fl with (nolock)
-            INNER JOIN QMS_FILEVERSIONINFO fi with (nolock) ON fl.ID=fi.FileID and fl.version = fi.version
-            INNER JOIN ( /* to verify that file is the latest approved version */
-                            select qms_fvi.fileid [file_id], max(qms_fvi.version) [version]
-                            from QMS_FILEVERSIONINFO qms_fvi with (nolock) left join 
-                                (
-                                    select fa.qmsid as unapproved_file_id, isnull(fa.version,1) unapproved_version
-                                    from QMS_FILE_APPROVAL fa with (nolock)
-                                    where isnull(fa.ApprovalStatus,0) = 0
-                                    group by fa.qmsid, fa.version
-                                ) ua on qms_fvi.FileID = ua.unapproved_file_id and qms_fvi.version = unapproved_version
-                            where ua.unapproved_file_id is null 
-                            group by fileid
-                        ) info on info.file_id = fl.id and info.version = fl.version
-            LEFT JOIN (select distinct UserID, FolderID from QMS_User_Folder_Access with (nolock) where UserID = @user_id) folderAccess ON fl.ParentID = folderAccess.FolderID /* verify user has access */
-        WHERE 
-		(@folder_id IS NULL OR fl.ParentID = @folder_id)
-        AND fl.Active_Status=1 AND fl.NodeType=0
-		AND (@modify_date_from IS NULL OR fl.Date_Of_Modification > @modify_date_from)
-		AND (@modify_date_to IS NULL OR fl.Date_Of_Modification < @modify_date_to)
-		AND (@is_admin_user = 1 OR folderAccess.UserID = @user_id)
-		) result
-	ORDER BY
-		CASE WHEN @sort_by = 'FileName' AND @sort_direction = 'asc' THEN result.FilenameWithoutPath END ASC,
-		CASE WHEN @sort_by = 'FileName' AND @sort_direction = 'desc' THEN result.FilenameWithoutPath END DESC,
-		CASE WHEN @sort_by = 'Size' AND @sort_direction = 'asc' THEN result.Size END ASC,
-		CASE WHEN @sort_by = 'Size' AND @sort_direction = 'desc' THEN result.Size END DESC,
-		CASE WHEN @sort_by = 'Version' AND @sort_direction = 'asc' THEN result.Version END ASC,
-		CASE WHEN @sort_by = 'Version' AND @sort_direction = 'desc' THEN result.Version END DESC,
-		result.FilenameWithoutPath ASC
-	OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY
+    SET NOCOUNT ON;
+
+    -- Determine if the user is an admin (adjust the list according to your actual admin types)
+    DECLARE @user_type NVARCHAR(100) = (SELECT User_Type FROM lib_user WITH (NOLOCK) WHERE UserId = @user_id);
+    DECLARE @is_admin_user BIT = CASE WHEN @user_type IN ('Admin', 'SuperAdmin') THEN 1 ELSE 0 END;
+
+    WITH BaseData AS
+    (
+        SELECT
+            fl.ID,
+            fl.ID AS DocumentID,
+            -- Build the full filename with path
+            LEFT(ISNULL(fl.Display_FilePath, N''),
+                CASE WHEN PATINDEX(N'%/%', ISNULL(fl.Display_FilePath, N'')) = 0 THEN 0
+                ELSE LEN(ISNULL(fl.Display_FilePath, N'')) - CHARINDEX(N'/', REVERSE(ISNULL(fl.Display_FilePath, N'')) + N'/')
+                END) + N'/' + fl.logfileid AS Filename,
+            -- Filename without path
+            ISNULL(fl.Actual_LogFileId, fl.logfileid) AS FilenameWithoutPath,
+            -- Path without filename
+            LEFT(ISNULL(fl.Display_FilePath, N''),
+                CASE WHEN PATINDEX(N'%/%', ISNULL(fl.Display_FilePath, N'')) = 0 THEN 0
+                ELSE LEN(ISNULL(fl.Display_FilePath, N'')) - CHARINDEX(N'/', REVERSE(ISNULL(fl.Display_FilePath, N'')) + N'/')
+                END) AS FilePathWithoutFilename,
+            -- File extension
+            CASE
+                WHEN CHARINDEX('.', REVERSE(fl.logfileid)) > 0
+                    AND CHARINDEX('.', fl.logfileid) > 0
+                THEN RIGHT(fl.logfileid, CHARINDEX('.', REVERSE(fl.logfileid)))
+                ELSE NULL
+            END AS Extension,
+            -- Size in KB
+            CONVERT(DECIMAL(9,2), CEILING((ISNULL(fl.Size, 0) / 1024.00) * 100) / 100) AS Size,
+            fi.Version,
+            fi.FilePath,
+            fl.date_of_creatation AS CreateDate,
+            fl.Date_of_modification AS ModifyDate,
+            fi.is_indexed AS Is_Indexed
+        FROM
+            QMSDtlsFile_log fl WITH (NOLOCK)
+            INNER JOIN QMS_FILEVERSIONINFO fi WITH (NOLOCK)
+                ON fl.ID = fi.FileID AND fl.version = fi.version
+            -- Latest approved version per file
+            INNER JOIN
+            (
+                SELECT
+                    v.FileID,
+                    MAX(v.Version) AS LatestVersion
+                FROM QMS_FILEVERSIONINFO v
+                WHERE NOT EXISTS
+                (
+                    SELECT 1
+                    FROM QMS_FILE_APPROVAL a
+                    WHERE a.qmsid = v.FileID
+                      AND a.version = v.Version
+                      AND ISNULL(a.ApprovalStatus, 0) = 0
+                )
+                GROUP BY v.FileID
+            ) latest ON fl.ID = latest.FileID AND fl.version = latest.LatestVersion
+        WHERE
+            fl.Active_Status = 1
+            AND fl.NodeType = 0   -- 0 = file, not folder
+            AND (@folder_id IS NULL OR fl.ParentID = @folder_id)
+            AND (@modify_date_from IS NULL OR fl.Date_Of_Modification > @modify_date_from)
+            AND (@modify_date_to IS NULL OR fl.Date_Of_Modification < @modify_date_to)
+            AND
+            (
+                @is_admin_user = 1
+                OR EXISTS
+                (
+                    SELECT 1
+                    FROM QMS_User_Folder_Access ufa
+                    WHERE ufa.UserID = @user_id
+                      AND ufa.FolderID = fl.ParentID
+                )
+            )
+    )
+    SELECT
+        *,
+        COUNT(*) OVER() AS TotalCount   -- Provides total row count for pagination
+    FROM BaseData
+    ORDER BY
+        CASE WHEN @sort_by = 'FileName' AND @sort_direction = 'asc'  THEN FilenameWithoutPath END ASC,
+        CASE WHEN @sort_by = 'FileName' AND @sort_direction = 'desc' THEN FilenameWithoutPath END DESC,
+        CASE WHEN @sort_by = 'Size'     AND @sort_direction = 'asc'  THEN Size END ASC,
+        CASE WHEN @sort_by = 'Size'     AND @sort_direction = 'desc' THEN Size END DESC,
+        CASE WHEN @sort_by = 'Version'  AND @sort_direction = 'asc'  THEN Version END ASC,
+        CASE WHEN @sort_by = 'Version'  AND @sort_direction = 'desc' THEN Version END DESC,
+        FilenameWithoutPath ASC   -- default sort
+    OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY;
+
 END
+GO
